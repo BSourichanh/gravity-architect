@@ -5,6 +5,19 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.0] - 2026-11-22
+
+### Added
+- **Zero-Token Repository Discovery (`init_workspace.py --discover`):**
+  - Read-only depth-1 scan of `--scan-dir` (default `--workspace`, excluding hidden `.xxx` directories and the workshop itself, never scanning `../` implicitly) with `--json` output (`workspace`, `scan_dir`, `initialized`, `candidates`).
+  - Reuses `sync_tracking.py` (`detect_plugin_manifest`, `derive_validator_script`, `detect_version_source`, `run_readonly_cmd`) to extract `id`, `name`, portable POSIX `path`, `preset`, `plugin_manifest`, `validator_script`, `main_branch` (`main` > `master` > current), `default_dev_branch` (`dev` if present else `main_branch`), `role`, `has_changelog`, and `has_agents`.
+- **Incremental Project Addition (`init_workspace.py --add <target>`):**
+  - Repeatable `--add` accepting `<path>` or `id=<path>`, requiring an existing `projects.json`, failing closed before any write on duplicate `id` or resolved path, and generating `tracking/projects/<id>.md` when missing.
+- **Built-In Presets, Impact Template & Guided Onboarding:**
+  - Added `plugin/templates/impact-template.md` and enforced it in `plugin/scripts/validate.py` (`REQUIRED_TEMPLATES`).
+  - Enriched `init_workspace.py` with path-only `--project <path>`, per-project auto-detected presets (and smart `default_preset` fallback), `--watch antigravity` (official 5 Antigravity surfaces, `tracking/antigravity/IMPACT.md` + `hot_budgets` entry), `--watch-url id=url`, `--public-mode`, and opt-in `--run-sync` / `--offline`.
+  - Updated `plugin/skills/gravity-architect/SKILL.md` and `plugin/rules/AGENTS.md` for hybrid guided `/gravity-architect init` (`ask_question`) and `/gravity-architect add`.
+
 ## [0.2.0] - 2026-11-22
 
 ### Added

@@ -68,6 +68,7 @@ REQUIRED_TEMPLATES = (
     "spec-template.md",
     "handoff-template.md",
     "project-card-template.md",
+    "impact-template.md",
     "archives-readme.md",
 )
 

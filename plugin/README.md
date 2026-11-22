@@ -4,10 +4,17 @@ Plugin Antigravity générique (**100 % bibliothèque standard Python 3**) pour 
 
 ## Commandes `/gravity-architect`
 
-- `/gravity-architect init [--workspace <dir>] [--preset generic|antigravity-plugin]` : initialise un atelier de conception autonome (`AGENTS.md`, `ECOSYSTEM.md`, `projects.json`, `specs/`, `handoffs/`, `tracking/`, `archives/`).
+- `/gravity-architect init [--workspace <dir>] [--name "<Titre>"] [--preset generic|antigravity-plugin]` : initialise un atelier de conception autonome (`AGENTS.md`, `ECOSYSTEM.md`, `projects.json`, `specs/`, `handoffs/`, `tracking/`, `archives/`) via découverte guidée (`init_workspace.py --discover --json`, `ask_question`, presets `--watch antigravity` / `--watch-url` / `--public-mode`) puis première synchronisation.
+- `/gravity-architect add <chemin...>` : ajoute de façon incrémentale et *fail-closed* un ou plusieurs dépôts (`<chemin>` ou `id=chemin`) via `init_workspace.py --add`, crée leur fiche `tracking/projects/<id>.md` puis lance la synchronisation éditoriale.
 - `/gravity-architect [sync] [--offline] [--check] [--full] [--ack-editorial] [--commit]` : synchronise en lecture seule les dépôts déclarés dans `projects.json`, met à jour les blocs `<!-- AUTO:START/END -->` à 0 token, produit un micro-delta compact et n'édite que les `Cibles éditoriales LLM` nécessaires.
 - `/gravity-architect status` : synthétise l'état courant à partir de `tracking/snapshots/delta.md` (ou `ECOSYSTEM.md`) sans relancer de collecte.
 - `/gravity-architect spec <slug>` · `/gravity-architect handoff <projet> <slug>` · `/gravity-architect archive <slug>` : cadrent, découpent et clôturent les artefacts de conception.
+
+### Options CLI d'initialisation (`scripts/init_workspace.py`)
+- `--discover [--scan-dir <dir>] [--json]` : liste en lecture seule (profondeur 1, hors `.xxx` et dossier atelier) les dépôts Git candidats avec auto-détection complète (`id`, `name`, `path`, `preset`, `plugin_manifest`, `validator_script`, `main_branch`, `default_dev_branch`, `role`, `has_changelog`, `has_agents`).
+- `--project <chemin|id=chemin>` : accepte un chemin nu avec auto-détection complète ou `id=chemin` ; `--preset` devient optionnel (surcharge explicite sinon auto-détecté par projet).
+- `--add <chemin|id=chemin>` *(répétable)* : ajoute des projets à un atelier existant (`projects.json` requis, refus *fail-closed* des doublons d'`id` ou de chemin résolu).
+- `--watch antigravity` / `--watch-url id=url` / `--public-mode` / `--run-sync [--offline]` : presets de veille (avec `tracking/antigravity/IMPACT.md` généré depuis `templates/impact-template.md`), mode confidentiel et synchronisation opt-in.
 
 ## Suivi multi-projets, contrat module & mode public
 

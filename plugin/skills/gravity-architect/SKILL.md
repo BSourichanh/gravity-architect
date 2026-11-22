@@ -2,7 +2,7 @@
 name: gravity-architect
 description: >-
   Orchestre un atelier générique de conception, specs, handoffs, architecture Hot/Cold
-  et suivi multi-projets lecture seule. Activer sur /gravity-architect [init|sync|status|spec|handoff|archive]
+  et suivi multi-projets lecture seule. Activer sur /gravity-architect [init|add|sync|status|spec|handoff|archive]
   ou lors d'une mise à jour d'un dépôt suivi.
 ---
 
@@ -15,19 +15,35 @@ description: >-
 
 ## Routage
 
-### 1. `/gravity-architect init`
-- Exécuter :
-  ```powershell
-  python "<PLUGIN_DIR>/scripts/init_workspace.py" --workspace "<CIBLE>"
-  ```
-  *(Options : `--name "<Titre>"`, `--preset generic|antigravity-plugin`, `--project id=chemin`, `--force`.)*
-- Rappeler ensuite à l'utilisateur de renseigner `projects.json` avec les dépôts à suivre.
+### 1. `/gravity-architect init` *(onboarding hybride guidé)*
+1. **Atelier déjà initialisé (`projects.json` présent) :** exécuter :
+   ```powershell
+   python "<PLUGIN_DIR>/scripts/init_workspace.py" --workspace .
+   ```
+   *(Strictement idempotent sans `--force`)* puis rappeler d'utiliser `/gravity-architect add <chemin...>` pour ajouter des dépôts.
+2. **Atelier vierge :** lancer la découverte lecture seule 0-token dans le dossier courant uniquement :
+   ```powershell
+   python "<PLUGIN_DIR>/scripts/init_workspace.py" --workspace . --discover --json
+   ```
+3. **Si `candidates` est vide :** ne **jamais** scanner `../` automatiquement ; demander via `ask_question` le dossier à scanner (`../` proposé en raccourci) ou des chemins directs, puis relancer `init_workspace.py --workspace . --discover --scan-dir "<CIBLE>" --json`.
+4. **Sélection guidée (1 seul appel `ask_question`) :** proposer :
+   - sélection multi-choix des dépôts découverts (`candidates`),
+   - veille à activer (`antigravity` recommandé si au moins un plugin Antigravity est détecté, ou aucune / `--watch-url`),
+   - `public_mode` (`false` par défaut).
+5. **Déploiement & 1re synchro :** exécuter `init_workspace.py --workspace .` avec les options retenues (`--project ...`, `--watch antigravity`, `--watch-url id=url`, `--public-mode`, `--name "<Titre>"`), puis enchaîner *(sauf si `--no-sync` demandé)* :
+   - `python "<PLUGIN_DIR>/scripts/sync_tracking.py" --workspace . --print-delta`
+   - remplissage éditorial initial des fiches `tracking/projects/*.md` (et `tracking/antigravity/IMPACT.md` si veille activée)
+   - `python "<PLUGIN_DIR>/scripts/sync_tracking.py" --workspace . --offline --ack-editorial --print-delta` pour sceller `tracking/snapshots/editorial_state.json`.
 
-### 2. `/gravity-architect status`
+### 2. `/gravity-architect add <chemin...>` *(ajout incrémental)*
+1. Exécuter `python "<PLUGIN_DIR>/scripts/init_workspace.py" --workspace . --add "<CHEMIN>"` *(répétable, accepte `<chemin>` ou `id=chemin` ; échoue fail-closed si `projects.json` absent ou doublon d'`id`/chemin)*.
+2. Enchaîner *(sauf `--no-sync`)* `sync_tracking.py --workspace . --print-delta` → compléter la fiche `tracking/projects/<id>.md` ajoutée → `sync_tracking.py --workspace . --offline --ack-editorial --print-delta`.
+
+### 3. `/gravity-architect status`
 - Lire uniquement `tracking/snapshots/delta.md` (ou `ECOSYSTEM.md` s'il n'existe pas encore) dans l'atelier détecté, sans relancer de synchronisation.
 - Résumer l'état courant, les chantiers WIP et les alertes hygiène en 5–8 lignes.
 
-### 3. `/gravity-architect` ou `/gravity-architect sync` *(défaut)*
+### 4. `/gravity-architect` ou `/gravity-architect sync` *(défaut)*
 1. Exécuter **1 seule commande** :
    ```powershell
    python "<PLUGIN_DIR>/scripts/sync_tracking.py" --print-delta
@@ -43,7 +59,7 @@ description: >-
      - Exécuter ensuite `python "<PLUGIN_DIR>/scripts/sync_tracking.py" --offline --ack-editorial --print-delta` pour sceller `tracking/snapshots/editorial_state.json` et confirmer `NO_EDITORIAL_CHANGES`.
 3. **Commit Git :** ne **pas** committer par défaut ; uniquement si `--commit` est demandé explicitement dans l'atelier, sans jamais `git push`.
 
-### 4. `/gravity-architect spec <slug>` · `handoff <projet> <slug>` · `archive <slug>`
+### 5. `/gravity-architect spec <slug>` · `handoff <projet> <slug>` · `archive <slug>`
 - **`spec <slug>` :** challenger le besoin, vérifier les solutions natives/existantes avant d'ajouter du code, puis créer `specs/<YYYY-MM-DD>-<slug>.md` depuis `specs/_TEMPLATE.md`.
 - **`handoff <projet> <slug>` :** créer `handoffs/<YYYY-MM-DD>-<projet>-<slug>.md` depuis `handoffs/_TEMPLATE.md` avec décisions figées, périmètre, invariants de `tracking/projects/<projet>.md` et commandes de vérification.
 - **`archive <slug>` :** déplacer la spec et les handoffs livrés vers `specs/archive/` et `handoffs/archive/` (statut `done`), actualiser les pistes actives puis exécuter `--offline --ack-editorial --print-delta`.

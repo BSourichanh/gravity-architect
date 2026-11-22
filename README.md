@@ -67,14 +67,18 @@ agy plugin install ./plugin
 Dans un atelier cible (initialisé via `/gravity-architect init` ou `init_workspace.py`) :
 
 ```powershell
-python plugin/scripts/init_workspace.py --workspace ./mon-atelier --project app=../mon-app
+python plugin/scripts/init_workspace.py --workspace ./mon-atelier --discover --json
+python plugin/scripts/init_workspace.py --workspace ./mon-atelier --project ../mon-app --watch antigravity
+python plugin/scripts/init_workspace.py --workspace ./mon-atelier --add ../autre-projet
 python plugin/scripts/sync_tracking.py --workspace ./mon-atelier --print-delta
 python plugin/scripts/sync_tracking.py --workspace ./mon-atelier --offline --ack-editorial --print-delta
 ```
 
-Dans Antigravity, utilisez ensuite `/gravity-architect [init|sync|status|spec|handoff|archive]` (voir [`plugin/README.md`](plugin/README.md)).
+Dans Antigravity, utilisez ensuite `/gravity-architect [init|add|sync|status|spec|handoff|archive]` (voir [`plugin/README.md`](plugin/README.md)).
 
-### Contrat module & confidentialité (`v0.2.0`)
+### Découverte, presets & confidentialité (`v0.3.0`)
+- **Découverte & ajout incrémental (`init_workspace.py`) :** `--discover [--scan-dir <dir>] [--json]` scanne en lecture seule (profondeur 1, sans jamais sortir du dossier cible implicitement) et `--add <chemin|id=chemin>` ajoute des projets *fail-closed* à un atelier existant.
+- **Presets intégrés :** `--project <chemin>` auto-détecte manifeste plugin, branches (`main`/`master`/`dev`) et rôle ; `--watch antigravity` configure la veille officielle Google Antigravity (`tracking/antigravity/IMPACT.md` depuis `templates/impact-template.md`), `--watch-url id=url` ajoute un changelog Markdown, `--public-mode` active `privacy.public_mode` et `--run-sync --offline` lance la synchro initiale à la demande.
 - **Contrat module :** [`plugin/config/module.json`](plugin/config/module.json) (`id: "architect"`, stockage par défaut `$GRAVITY_ARCHITECT_HOME` > `$GRAVITY_HOME/architect` > `~/.gemini/gravity/architect` via `default_architect_home()`).
 - **Auto-détection `plugin_manifest` :** `plugin/plugin.json` en priorité, puis `{id}-plugin/plugin.json`, puis `plugin.json` (et dérivation automatique de `validator_script`).
 - **Mode public (`privacy.public_mode`):** option opt-in dans `projects.json` (`{"privacy": {"public_mode": true}}` ou `"public_mode": true`) pour filtrer `ECOSYSTEM.md` aux seuls plugins suivis, supprimer les alertes `orphan_plugin_dirs` des répertoires tiers et masquer les chemins absolus machine dans les Markdown générés.
@@ -93,7 +97,7 @@ python -m unittest discover -s tests -p "test_*.py" -v
 
 ## Documentation & Releases
 
-- [`CHANGELOG.md`](CHANGELOG.md) — Historique des releases (`v0.2.0`)
+- [`CHANGELOG.md`](CHANGELOG.md) — Historique des releases (`v0.3.0`)
 - [`plugin/README.md`](plugin/README.md) — Guide complet du plugin et des commandes `/gravity-architect`
 - [`AGENTS.md`](AGENTS.md) — Charte, invariants et vérifications obligatoires
 
