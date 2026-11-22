@@ -1,0 +1,15 @@
+# Atelier local privé (dogfooding hors dépôt public)
+gravity_projects/
+
+# Runtime & Python
+.agents/
+__pycache__/
+*.py[cod]
+*.pyo
+.pytest_cache/
+
+# Temporaires & OS
+*.tmp
+*.bak
+.DS_Store
+Thumbs.db

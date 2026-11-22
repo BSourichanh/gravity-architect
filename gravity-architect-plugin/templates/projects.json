@@ -1,0 +1,12 @@
+{
+  "schema_version": 5,
+  "workspace_name": "Mon Atelier Projets",
+  "default_preset": "generic",
+  "hot_budgets": {
+    "AGENTS.md": 2500,
+    "ECOSYSTEM.md": 6000,
+    "project_card_max_bytes": 3500
+  },
+  "watches": [],
+  "projects": []
+}

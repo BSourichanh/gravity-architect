@@ -1,0 +1,17 @@
+{
+  "name": "gravity-architect",
+  "displayName": "Gravity Architect",
+  "version": "0.1.0",
+  "description": "Atelier générique de conception, specs, handoffs et suivi multi-projets lecture seule à architecture Hot/Cold pour Antigravity.",
+  "logo": "assets/logo.svg",
+  "suggestedPrompts": [
+    "/gravity-architect init",
+    "/gravity-architect sync",
+    "/gravity-architect status"
+  ],
+  "author": {
+    "name": "Gravity Contributors"
+  },
+  "homepage": "https://github.com/BSourichanh/gravity-architect",
+  "repository": "https://github.com/BSourichanh/gravity-architect.git"
+}
