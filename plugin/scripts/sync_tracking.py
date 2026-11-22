@@ -96,6 +96,13 @@ AUTO_BLOCK_RE = re.compile(
     r"<!-- AUTO:START:[^>]+ -->.*?<!-- AUTO:END:[^>]+ -->",
     re.DOTALL,
 )
+MACHINE_ABS_PATH_RE = re.compile(
+    r"(?:"
+    r"(?<![A-Za-z0-9_])[A-Za-z]:[\\/][^\s`\"'<>|)\]]+"
+    r"|\\\\[A-Za-z0-9_.-]+[\\/][^\s`\"'<>|)\]]+"
+    r"|(?<![:\w/])/(?:Users|home|var|tmp|opt|etc|mnt|Volumes|private|root)/[^\s`\"'<>|)\]]+"
+    r")"
+)
 
 
 def _configure_utf8_stdio() -> None:
@@ -173,6 +180,170 @@ def _editorial_prose_sha256(path: Path) -> str | None:
     without_auto = AUTO_BLOCK_RE.sub("", raw)
     normalized = "\n".join(line.rstrip() for line in without_auto.splitlines()).strip()
     return hashlib.sha256(normalized.encode("utf-8")).hexdigest()
+
+
+def default_architect_home(
+    *,
+    env: dict[str, str] | None = None,
+    home_dir: Path | None = None,
+) -> Path:
+    """Résout le dossier centralisé Architect (`GRAVITY_ARCHITECT_HOME` > `GRAVITY_HOME/architect` > `~/.gemini/gravity/architect`)."""
+    env_map = env if env is not None else os.environ
+    architect_env = str(env_map.get("GRAVITY_ARCHITECT_HOME") or "").strip()
+    if architect_env:
+        return Path(architect_env).expanduser().resolve()
+    gravity_env = str(env_map.get("GRAVITY_HOME") or "").strip()
+    if gravity_env:
+        return (Path(gravity_env).expanduser().resolve() / "architect").resolve()
+    base_home = (home_dir if home_dir is not None else Path.home()).expanduser().resolve()
+    return (base_home / ".gemini" / "gravity" / "architect").resolve()
+
+
+def resolve_public_mode(cfg: dict | None) -> bool:
+    """Retourne True si `privacy.public_mode` ou `public_mode` est activé."""
+    if not isinstance(cfg, dict):
+        return False
+    privacy = cfg.get("privacy")
+    if isinstance(privacy, dict) and "public_mode" in privacy:
+        return bool(privacy.get("public_mode"))
+    if "public_mode" in cfg:
+        return bool(cfg.get("public_mode"))
+    return False
+
+
+def _is_machine_absolute_path(raw: str) -> bool:
+    """Retourne True si `raw` est un chemin absolu machine (Windows, UNC ou POSIX)."""
+    s = raw.strip()
+    if not s:
+        return False
+    if Path(s).is_absolute():
+        return True
+    if s.startswith("/") or s.startswith("\\"):
+        return True
+    return bool(re.match(r"^[A-Za-z]:[\\/]", s))
+
+
+def _tracked_project_keys(snapshot: dict) -> set[str]:
+    """Retourne l'ensemble des identifiants (`id`, `plugin_name`) des projets suivis."""
+    keys: set[str] = set()
+    for proj in snapshot.get("projects") or []:
+        if not isinstance(proj, dict):
+            continue
+        for val in (
+            proj.get("id"),
+            proj.get("plugin_name"),
+            (proj.get("stable") or {}).get("plugin_name"),
+        ):
+            cleaned = str(val or "").strip()
+            if cleaned:
+                keys.add(cleaned)
+    return keys
+
+
+def _visible_installed_plugins(snapshot: dict, public_mode: bool) -> list[dict]:
+    """Filtre `installed_plugins` aux seuls plugins suivis lorsque `public_mode` est actif."""
+    installed = [
+        p
+        for p in ((snapshot.get("environment") or {}).get("installed_plugins") or [])
+        if isinstance(p, dict)
+    ]
+    if not public_mode:
+        return installed
+    tracked = _tracked_project_keys(snapshot)
+    return [p for p in installed if p.get("name") in tracked or p.get("dir") in tracked]
+
+
+def _visible_orphan_plugin_dirs(snapshot: dict, public_mode: bool) -> list[str]:
+    """Exclut les dossiers tiers hors projets suivis lorsque `public_mode` est actif."""
+    orphans = list((snapshot.get("environment") or {}).get("orphan_plugin_dirs") or [])
+    if not public_mode:
+        return orphans
+    tracked = _tracked_project_keys(snapshot)
+    return [d for d in orphans if d in tracked]
+
+
+def _format_project_display_path(proj: dict, *, public_mode: bool) -> str:
+    """Formate le chemin affiché d'un projet en masquant tout chemin absolu machine en mode public."""
+    pid = str(proj.get("id") or "project")
+    raw_display = str(proj.get("display_path") or f"../{pid}").strip()
+    if not public_mode:
+        return raw_display
+    if not _is_machine_absolute_path(raw_display) and not MACHINE_ABS_PATH_RE.search(raw_display):
+        return raw_display.replace("\\", "/")
+    return f"<repo:{pid}>"
+
+
+def _collect_path_replacements(
+    snapshot: dict | None = None,
+    *,
+    concept_root: Path | None = None,
+    gemini_home: Path | None = None,
+) -> list[tuple[str, str]]:
+    """Construit la table ordonnée `(chemin_absolu, masque)` pour la sanitisation Markdown."""
+    pairs: list[tuple[str, str]] = []
+
+    def _add(raw_path: str | Path | None, token: str) -> None:
+        if not raw_path:
+            return
+        s = str(raw_path).strip()
+        if not s or not _is_machine_absolute_path(s):
+            return
+        variants = {s, s.rstrip("/\\"), s.replace("\\", "/"), s.replace("/", "\\")}
+        try:
+            res = str(Path(s).resolve())
+            variants.update({res, res.replace("\\", "/"), res.replace("/", "\\")})
+        except OSError:
+            pass
+        for v in variants:
+            if len(v) >= 4:
+                pairs.append((v, token))
+
+    if isinstance(snapshot, dict):
+        env = snapshot.get("environment") or {}
+        for p in env.get("installed_plugins") or []:
+            if isinstance(p, dict):
+                _add(
+                    p.get("install_path"),
+                    f"<install:{p.get('name') or p.get('dir') or 'plugin'}>",
+                )
+        _add(env.get("plugins_dir"), "<plugins-dir>")
+        _add(env.get("agy_path"), "<agy>")
+        for proj in snapshot.get("projects") or []:
+            if isinstance(proj, dict):
+                pid = str(proj.get("id") or "project")
+                _add(proj.get("path"), f"<repo:{pid}>")
+                disp = str(proj.get("display_path") or "")
+                if _is_machine_absolute_path(disp):
+                    _add(disp, f"<repo:{pid}>")
+
+    if concept_root is not None:
+        _add(concept_root, "<workspace>")
+    if gemini_home is not None:
+        _add(gemini_home, "<gemini-home>")
+    try:
+        _add(Path.home() / ".gemini", "<gemini-home>")
+        _add(Path.home(), "<home>")
+    except OSError:
+        pass
+
+    dedup: dict[str, str] = {}
+    for raw, tok in sorted(pairs, key=lambda item: len(item[0]), reverse=True):
+        if raw not in dedup:
+            dedup[raw] = tok
+    return list(dedup.items())
+
+
+def _sanitize_markdown_paths(
+    text: str,
+    *,
+    replacements: list[tuple[str, str]] | None = None,
+) -> str:
+    """Masque les chemins absolus machine connus ou génériques dans un texte Markdown."""
+    cleaned = text
+    for raw_path, token in replacements or []:
+        if raw_path in cleaned:
+            cleaned = cleaned.replace(raw_path, token)
+    return MACHINE_ABS_PATH_RE.sub("<path>", cleaned)
 
 
 def resolve_workspace_root(
@@ -533,20 +704,55 @@ def parse_version_from_text(
     return result
 
 
-def detect_version_source(project_cfg: dict, repo_dir: Path) -> str | None:
+def detect_plugin_manifest(project_cfg: dict, repo_dir: Path) -> str | None:
+    """Résout le chemin relatif de `plugin.json` (`plugin/plugin.json` > `{id}-plugin/plugin.json` > `plugin.json`)."""
+    explicit = project_cfg.get("plugin_manifest")
+    if explicit:
+        return str(explicit)
+
+    project_id = str(project_cfg.get("id") or repo_dir.name)
+    for candidate in (
+        "plugin/plugin.json",
+        f"{project_id}-plugin/plugin.json",
+        "plugin.json",
+    ):
+        if (repo_dir / candidate).is_file():
+            return candidate
+    for pjson in sorted(repo_dir.glob("*-plugin/plugin.json"), key=lambda p: p.as_posix()):
+        return pjson.relative_to(repo_dir).as_posix()
+    return None
+
+
+def derive_validator_script(project_cfg: dict, manifest_rel: str | None) -> str | None:
+    """Dérive le chemin relatif de `validate.py` depuis `validator_script` ou `plugin_manifest`."""
+    explicit = project_cfg.get("validator_script")
+    if explicit:
+        return str(explicit)
+    if not manifest_rel:
+        return None
+    return (Path(str(manifest_rel)).parent / "scripts" / "validate.py").as_posix()
+
+
+def detect_version_source(
+    project_cfg: dict,
+    repo_dir: Path,
+    default_preset: str = "generic",
+) -> str | None:
     """Identifie le fichier source de version d'un dépôt (explicite ou auto-détecté)."""
     explicit = project_cfg.get("version_file") or project_cfg.get("plugin_manifest")
     if explicit:
         return str(explicit)
 
+    preset = str(project_cfg.get("preset") or default_preset or "generic").strip().lower()
+    if preset == "antigravity-plugin":
+        manifest_rel = detect_plugin_manifest(project_cfg, repo_dir)
+        if manifest_rel:
+            return manifest_rel
+
     for candidate in ("package.json", "pyproject.toml", "Cargo.toml", "setup.cfg", "VERSION", "version.txt"):
         if (repo_dir / candidate).is_file():
             return candidate
-    if (repo_dir / "plugin.json").is_file():
-        return "plugin.json"
-    for pjson in sorted(repo_dir.glob("*-plugin/plugin.json"), key=lambda p: p.as_posix()):
-        return pjson.relative_to(repo_dir).as_posix()
-    return None
+    return detect_plugin_manifest(project_cfg, repo_dir)
 
 
 def resolve_project_preset(project_cfg: dict, global_cfg: dict | None = None) -> str:
@@ -651,9 +857,8 @@ def _evaluate_antigravity_plugin_compliance(
     repo_dir: Path,
     issues: list[str],
 ) -> None:
-    project_id = str(project_cfg.get("id") or repo_dir.name)
-    manifest_rel = project_cfg.get("plugin_manifest") or f"{project_id}-plugin/plugin.json"
-    manifest_path = repo_dir / str(manifest_rel)
+    manifest_rel = detect_plugin_manifest(project_cfg, repo_dir) or "plugin/plugin.json"
+    manifest_path = repo_dir / manifest_rel
     if not manifest_path.is_file():
         issues.append(f"{manifest_rel} manquant")
     else:
@@ -706,10 +911,8 @@ def _evaluate_antigravity_plugin_compliance(
     if not (repo_dir / "tests").is_dir():
         issues.append("tests/ manquant")
 
-    validator_rel = project_cfg.get("validator_script")
-    if not validator_rel and manifest_rel:
-        validator_rel = (Path(str(manifest_rel)).parent / "scripts" / "validate.py").as_posix()
-    if validator_rel and not (repo_dir / str(validator_rel)).is_file():
+    validator_rel = derive_validator_script(project_cfg, manifest_rel)
+    if validator_rel and not (repo_dir / validator_rel).is_file():
         issues.append(f"{validator_rel} manquant")
 
 
@@ -850,6 +1053,7 @@ def collect_project_snapshot(
     snapshot: dict = {
         "id": project_id,
         "name": project_cfg.get("name", project_id),
+        "plugin_name": project_cfg.get("plugin_name"),
         "role": project_cfg.get("role", ""),
         "preset": preset,
         "display_path": raw_path_str,
@@ -928,7 +1132,7 @@ def collect_project_snapshot(
         project_cfg, repo_dir, default_preset=preset
     )
 
-    version_rel = detect_version_source(project_cfg, repo_dir)
+    version_rel = detect_version_source(project_cfg, repo_dir, default_preset=preset)
     if version_rel:
         version_path = repo_dir / version_rel
         if version_path.is_file():
@@ -946,7 +1150,7 @@ def collect_project_snapshot(
             except OSError:
                 pass
 
-    manifest_rel = project_cfg.get("plugin_manifest")
+    manifest_rel = detect_plugin_manifest(project_cfg, repo_dir)
     if preset == "antigravity-plugin" and installed_plugins_map:
         lookup_key = snapshot["stable"]["plugin_name"] or project_id
         installed_info = installed_plugins_map.get(lookup_key) or installed_plugins_map.get(
@@ -1672,8 +1876,14 @@ def _has_install_audit(snapshot: dict) -> bool:
     )
 
 
-def render_ecosystem_snapshot_markdown(snapshot: dict) -> str:
+def render_ecosystem_snapshot_markdown(
+    snapshot: dict,
+    *,
+    public_mode: bool | None = None,
+    replacements: list[tuple[str, str]] | None = None,
+) -> str:
     """Génère la synthèse Markdown séparant l'état stable (`main`), `dev`, et le WIP."""
+    effective_public = resolve_public_mode(snapshot) if public_mode is None else public_mode
     env = snapshot.get("environment") or {}
     show_installed = _has_install_audit(snapshot)
     lines = [
@@ -1683,7 +1893,7 @@ def render_ecosystem_snapshot_markdown(snapshot: dict) -> str:
     ]
     if env.get("local_agy_version"):
         lines.append(f"- **CLI locale `agy` :** `{env['local_agy_version']}`")
-    installed = env.get("installed_plugins") or []
+    installed = _visible_installed_plugins(snapshot, effective_public)
     if show_installed:
         installed_fmt = (
             ", ".join(_format_installed_plugin_badge(p) for p in installed)
@@ -1691,7 +1901,7 @@ def render_ecosystem_snapshot_markdown(snapshot: dict) -> str:
             else "aucun"
         )
         lines.append(f"- **Plugins installés :** {installed_fmt}")
-        orphans = env.get("orphan_plugin_dirs") or []
+        orphans = _visible_orphan_plugin_dirs(snapshot, effective_public)
         if orphans:
             lines.append(
                 f"- **Dossiers sans `plugin.json` :** {', '.join(f'`{d}`' for d in orphans)}"
@@ -1749,7 +1959,12 @@ def render_ecosystem_snapshot_markdown(snapshot: dict) -> str:
         comp = stable.get("compliance") or {}
         lines.append(f"### {proj['name']} (`{proj['id']}`)")
         lines.append("")
-        lines.append(f"- **Chemin :** `{proj['path']}`")
+        shown_path = (
+            _format_project_display_path(proj, public_mode=True)
+            if effective_public
+            else proj["path"]
+        )
+        lines.append(f"- **Chemin :** `{shown_path}`")
         lines.append(f"- **Rôle :** {proj['role']}")
         lines.append("")
         lines.append("#### Releases & Historique Git (Stable)")
@@ -1826,7 +2041,15 @@ def render_ecosystem_snapshot_markdown(snapshot: dict) -> str:
                 vers = ", ".join(f"`{v}`" for v in sinfo.get("versions") or []) or "n/a"
                 lines.append(f"| {sinfo.get('heading', slug)} | `{latest}` | {vers} |")
             lines.append("")
-    return "\n".join(lines).rstrip() + "\n"
+    rendered = "\n".join(lines).rstrip() + "\n"
+    if effective_public:
+        mask_pairs = (
+            replacements
+            if replacements is not None
+            else _collect_path_replacements(snapshot)
+        )
+        rendered = _sanitize_markdown_paths(rendered, replacements=mask_pairs)
+    return rendered
 
 
 def _compute_unified_diff(
@@ -2013,8 +2236,13 @@ def compute_delta_with_state(
     concept_root: Path,
     editorial_state: dict | None = None,
     ack_editorial: bool = False,
+    public_mode: bool | None = None,
+    replacements: list[tuple[str, str]] | None = None,
 ) -> tuple[dict, dict]:
     """Calcule le micro-delta avec persistance de l'état éditorial et auto-acquittement."""
+    effective_public = (
+        resolve_public_mode(curr_snapshot) if public_mode is None else public_mode
+    )
     prev_projects_wip: dict[str, dict] = {}
     if isinstance(prev_snapshot, dict):
         for p in prev_snapshot.get("projects", []):
@@ -2285,12 +2513,23 @@ def compute_delta_with_state(
                 )
 
     if _has_install_audit(curr_snapshot):
-        orphan_dirs = env.get("orphan_plugin_dirs") or []
+        orphan_dirs = _visible_orphan_plugin_dirs(curr_snapshot, effective_public)
         if orphan_dirs:
             hygiene_alerts.append(
                 "Plugins locaux : dossier(s) sans `plugin.json` "
                 f"({', '.join(f'`{d}`' for d in orphan_dirs)})."
             )
+
+    if effective_public:
+        mask_pairs = (
+            replacements
+            if replacements is not None
+            else _collect_path_replacements(curr_snapshot, concept_root=concept_root)
+        )
+        hygiene_alerts = [
+            _sanitize_markdown_paths(alert, replacements=mask_pairs)
+            for alert in hygiene_alerts
+        ]
 
     ag_watch = watch_deltas.get("antigravity") or {}
     fetch_status_summary = (
@@ -2306,6 +2545,7 @@ def compute_delta_with_state(
     delta_payload = {
         "schema_version": SCHEMA_VERSION,
         "synced_at": curr_snapshot["synced_at"],
+        "public_mode": effective_public,
         "fetch_status": fetch_status_summary,
         "needs_editorial_update": len(editorial_targets) > 0,
         "editorial_targets": editorial_targets,
@@ -2343,6 +2583,7 @@ def compute_delta(
     concept_root: Path,
     editorial_state: dict | None = None,
     ack_editorial: bool = False,
+    public_mode: bool | None = None,
 ) -> dict:
     """Calcule le micro-delta entre le snapshot précédent et le snapshot courant."""
     delta, _ = compute_delta_with_state(
@@ -2351,6 +2592,7 @@ def compute_delta(
         concept_root=concept_root,
         editorial_state=editorial_state,
         ack_editorial=ack_editorial,
+        public_mode=public_mode,
     )
     return delta
 
@@ -2369,7 +2611,12 @@ def _append_budget_alerts(delta: dict, hot_budgets: dict[str, dict]) -> None:
     delta["hygiene_alerts"] = cleaned
 
 
-def render_delta_markdown(delta: dict, dry_run: bool = False) -> str:
+def render_delta_markdown(
+    delta: dict,
+    dry_run: bool = False,
+    *,
+    replacements: list[tuple[str, str]] | None = None,
+) -> str:
     """Formate le micro-delta ultra-compact pour consommation LLM à coût minimal."""
     status = (
         "EDITORIAL_UPDATE_REQUIRED"
@@ -2469,7 +2716,11 @@ def render_delta_markdown(delta: dict, dry_run: bool = False) -> str:
                     used_chars += len(bullet) + 4
         lines.append("")
 
-    return "\n".join(lines).rstrip() + "\n"
+    rendered = "\n".join(lines).rstrip() + "\n"
+    if delta.get("public_mode"):
+        mask_pairs = replacements if replacements is not None else _collect_path_replacements()
+        rendered = _sanitize_markdown_paths(rendered, replacements=mask_pairs)
+    return rendered
 
 
 def replace_auto_block(text: str, block_id: str, new_body: str) -> tuple[str, bool]:
@@ -2518,7 +2769,15 @@ def _format_project_handoffs_block(pid: str, artifacts: dict) -> str:
     return "\n".join(lines)
 
 
-def _build_ecosystem_blocks(snapshot: dict, delta: dict, concept_root: Path) -> dict[str, str]:
+def _build_ecosystem_blocks(
+    snapshot: dict,
+    delta: dict,
+    concept_root: Path,
+    *,
+    public_mode: bool | None = None,
+    replacements: list[tuple[str, str]] | None = None,
+) -> dict[str, str]:
+    effective_public = resolve_public_mode(snapshot) if public_mode is None else public_mode
     sync_date = snapshot["synced_at"][:10]
     env = snapshot.get("environment") or {}
     show_installed = _has_install_audit(snapshot)
@@ -2529,7 +2788,7 @@ def _build_ecosystem_blocks(snapshot: dict, delta: dict, concept_root: Path) -> 
     ]
     if show_installed:
         agy_ver = env.get("local_agy_version") or "non détectée"
-        installed = env.get("installed_plugins") or []
+        installed = _visible_installed_plugins(snapshot, effective_public)
         installed_fmt = (
             ", ".join(_format_installed_plugin_badge(p) for p in installed)
             if installed
@@ -2553,7 +2812,7 @@ def _build_ecosystem_blocks(snapshot: dict, delta: dict, concept_root: Path) -> 
         ]
     for proj in snapshot["projects"]:
         pid = proj["id"]
-        rel_path = proj.get("display_path") or f"../{pid}"
+        rel_path = _format_project_display_path(proj, public_mode=effective_public)
         card_rel = f"tracking/projects/{pid}.md"
         card_cell = (
             f"[`{pid}.md`]({card_rel})"
@@ -2641,7 +2900,7 @@ def _build_ecosystem_blocks(snapshot: dict, delta: dict, concept_root: Path) -> 
     )
 
     watch_body = "\n".join(watch_lines)
-    return {
+    blocks = {
         "ecosystem-meta": meta_block,
         "ecosystem-projects": "\n".join(proj_lines),
         "ecosystem-watches": watch_body,
@@ -2649,6 +2908,17 @@ def _build_ecosystem_blocks(snapshot: dict, delta: dict, concept_root: Path) -> 
         "ecosystem-artifacts": "\n".join(art_lines),
         "ecosystem-hygiene": hygiene_block,
     }
+    if effective_public:
+        mask_pairs = (
+            replacements
+            if replacements is not None
+            else _collect_path_replacements(snapshot, concept_root=concept_root)
+        )
+        blocks = {
+            key: _sanitize_markdown_paths(val, replacements=mask_pairs)
+            for key, val in blocks.items()
+        }
+    return blocks
 
 
 def apply_auto_doc_updates(
@@ -2656,8 +2926,21 @@ def apply_auto_doc_updates(
     snapshot: dict,
     delta: dict,
     dry_run: bool = False,
+    *,
+    public_mode: bool | None = None,
+    replacements: list[tuple[str, str]] | None = None,
 ) -> list[str]:
     """Met à jour les blocs `<!-- AUTO:START/END -->` des fiches vivantes existantes."""
+    effective_public = resolve_public_mode(snapshot) if public_mode is None else public_mode
+    mask_pairs = (
+        (
+            replacements
+            if replacements is not None
+            else _collect_path_replacements(snapshot, concept_root=concept_root)
+        )
+        if effective_public
+        else None
+    )
     updated_files: list[str] = []
     sync_date = snapshot["synced_at"][:10]
     artifacts = snapshot.get("artifacts") or {}
@@ -2668,7 +2951,14 @@ def apply_auto_doc_updates(
         original = eco_path.read_text(encoding="utf-8", errors="replace")
         current = original
         any_changed = False
-        for block_id, body in _build_ecosystem_blocks(snapshot, delta, concept_root).items():
+        eco_blocks = _build_ecosystem_blocks(
+            snapshot,
+            delta,
+            concept_root,
+            public_mode=effective_public,
+            replacements=mask_pairs,
+        )
+        for block_id, body in eco_blocks.items():
             current, changed = replace_auto_block(current, block_id, body)
             any_changed = any_changed or changed
         if any_changed:
@@ -2688,7 +2978,7 @@ def apply_auto_doc_updates(
         wip = proj["wip"]
         dev_b = branches.get("dev_branch") or proj.get("default_dev_branch") or "dev"
         main_b = branches.get("main_branch") or "main"
-        display_path = proj.get("display_path") or f"../{pid}"
+        display_path = _format_project_display_path(proj, public_mode=effective_public)
 
         chg_link = (
             f"[`{pid}-CHANGELOG.md`](../../archives/changelogs/{pid}-CHANGELOG.md)"
@@ -2751,9 +3041,13 @@ def apply_auto_doc_updates(
             ]
         )
         handoffs_body = _format_project_handoffs_block(pid, artifacts)
+        meta_body = "\n".join(meta_lines)
+        if effective_public:
+            meta_body = _sanitize_markdown_paths(meta_body, replacements=mask_pairs)
+            handoffs_body = _sanitize_markdown_paths(handoffs_body, replacements=mask_pairs)
 
         original = card_path.read_text(encoding="utf-8", errors="replace")
-        current, ch1 = replace_auto_block(original, f"project-meta:{pid}", "\n".join(meta_lines))
+        current, ch1 = replace_auto_block(original, f"project-meta:{pid}", meta_body)
         current, ch2 = replace_auto_block(current, f"project-handoffs:{pid}", handoffs_body)
         if ch1 or ch2:
             if not dry_run:
@@ -2796,6 +3090,8 @@ def apply_auto_doc_updates(
 
         original = impact_path.read_text(encoding="utf-8", errors="replace")
         body = "\n".join(meta_lines)
+        if effective_public:
+            body = _sanitize_markdown_paths(body, replacements=mask_pairs)
         current, ch = replace_auto_block(original, f"watch-meta:{wid}", body)
         if not ch and wid == "antigravity":
             current, ch = replace_auto_block(current, "antigravity-meta", body)
@@ -2819,9 +3115,11 @@ def run_sync(
     dry_run: bool = False,
     apply_docs: bool = True,
     ack_editorial: bool = False,
+    public_mode: bool | None = None,
 ) -> tuple[dict, dict]:
     """Exécute la synchronisation complète et retourne `(snapshot, delta)`."""
     cfg = load_config(config_path)
+    effective_public = resolve_public_mode(cfg) if public_mode is None else public_mode
     base_dir = config_path.resolve().parent
     resolved_concept_root = (
         concept_root.resolve() if concept_root is not None else base_dir
@@ -2920,6 +3218,7 @@ def run_sync(
     full_snapshot = {
         "schema_version": SCHEMA_VERSION,
         "synced_at": synced_at,
+        "public_mode": effective_public,
         "environment": env_data,
         "projects": projects_data,
         "watches": watches_data,
@@ -2929,12 +3228,24 @@ def run_sync(
     if "antigravity" in watches_data:
         full_snapshot["antigravity"] = watches_data["antigravity"]
 
+    mask_pairs = (
+        _collect_path_replacements(
+            full_snapshot,
+            concept_root=resolved_concept_root,
+            gemini_home=gemini_home,
+        )
+        if effective_public
+        else None
+    )
+
     delta, next_editorial_state = compute_delta_with_state(
         prev_snapshot,
         full_snapshot,
         resolved_concept_root,
         editorial_state=prev_editorial_state,
         ack_editorial=ack_editorial,
+        public_mode=effective_public,
+        replacements=mask_pairs,
     )
     pre_budgets = evaluate_hot_budgets(
         resolved_concept_root, budgets_cfg, project_ids, watch_impact_files=watch_impacts
@@ -2973,6 +3284,8 @@ def run_sync(
             full_snapshot,
             delta,
             dry_run=dry_run,
+            public_mode=effective_public,
+            replacements=mask_pairs,
         )
 
     post_budgets = evaluate_hot_budgets(
@@ -2987,12 +3300,14 @@ def run_sync(
             full_snapshot,
             delta,
             dry_run=False,
+            public_mode=effective_public,
+            replacements=mask_pairs,
         )
         for item in extra:
             if item not in delta["auto_updated_files"]:
                 delta["auto_updated_files"].append(item)
 
-    delta_md = render_delta_markdown(delta, dry_run=dry_run)
+    delta_md = render_delta_markdown(delta, dry_run=dry_run, replacements=mask_pairs)
 
     if not dry_run:
         for wid, wobj in watches_data.items():
@@ -3002,7 +3317,11 @@ def run_sync(
         _write_json_if_changed(snapshots_dir / "ecosystem_snapshot.json", full_snapshot)
         _write_md_if_changed(
             snapshots_dir / "ecosystem_snapshot.md",
-            render_ecosystem_snapshot_markdown(full_snapshot),
+            render_ecosystem_snapshot_markdown(
+                full_snapshot,
+                public_mode=effective_public,
+                replacements=mask_pairs,
+            ),
         )
         _write_json_if_changed(snapshots_dir / "delta.json", delta)
         _write_md_if_changed(snapshots_dir / "delta.md", delta_md)
@@ -3111,7 +3430,14 @@ def main(argv: list[str] | None = None) -> int:
         return 1
 
     if args.print_delta:
-        sys.stdout.write(render_delta_markdown(delta, dry_run=args.dry_run))
+        delta_masks = (
+            _collect_path_replacements(snapshot, concept_root=concept_root)
+            if snapshot.get("public_mode")
+            else None
+        )
+        sys.stdout.write(
+            render_delta_markdown(delta, dry_run=args.dry_run, replacements=delta_masks)
+        )
     else:
         prefix = "[dry-run] " if args.dry_run else ""
         print(

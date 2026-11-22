@@ -9,7 +9,7 @@ description: >-
 # Gravity Architect — Atelier de Conception & Suivi Multi-Projets
 
 ## Règles strictes
-1. **Résolution du moteur :** localiser les scripts dans `~/.gemini/config/plugins/gravity-architect/scripts/` (ou `./gravity-architect-plugin/scripts/` en développement local).
+1. **Résolution du moteur :** localiser les scripts dans `~/.gemini/config/plugins/gravity-architect/scripts/` (ou `./plugin/scripts/` en développement local).
 2. **Lecture seule absolue hors de l'atelier :** ne jamais créer, éditer ou exécuter de commande Git mutante dans les dépôts suivis déclarés dans `projects.json`.
 3. **Économie maximale de tokens :** ne jamais inspecter manuellement les dépôts suivis avant d'avoir exécuté `sync_tracking.py --print-delta` et lu le micro-delta.
 

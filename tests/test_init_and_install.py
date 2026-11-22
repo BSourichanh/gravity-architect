@@ -11,7 +11,7 @@ import tempfile
 import unittest
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
-PLUGIN_ROOT = REPO_ROOT / "gravity-architect-plugin"
+PLUGIN_ROOT = REPO_ROOT / "plugin"
 sys.path.insert(0, str(REPO_ROOT))
 sys.path.insert(0, str(PLUGIN_ROOT / "scripts"))
 
@@ -69,10 +69,12 @@ class TestInitAndInstall(unittest.TestCase):
             )
             self.assertEqual(rc, 0)
             cfg = json.loads((ws / "projects.json").read_text(encoding="utf-8"))
+            self.assertEqual(cfg["privacy"], {"public_mode": False})
             self.assertEqual(cfg["projects"][0]["preset"], "antigravity-plugin")
-            self.assertEqual(cfg["projects"][0]["plugin_manifest"], "myplug-plugin/plugin.json")
+            self.assertEqual(cfg["projects"][0]["plugin_manifest"], "plugin/plugin.json")
+            self.assertEqual(cfg["projects"][0]["validator_script"], "plugin/scripts/validate.py")
 
-    def test_validate_plugin_strict_passes_and_rejects_leaks(self) -> None:
+    def test_validate_plugin_strict_passes_and_rejects_leaks_and_bad_module(self) -> None:
         report = validate.Report()
         validate.validate_plugin(PLUGIN_ROOT, report)
         self.assertTrue(report.ok(strict=True), f"Errors: {report.errors} | Warnings: {report.warnings}")
@@ -86,7 +88,28 @@ class TestInitAndInstall(unittest.TestCase):
             self.assertFalse(bad_rep.ok(strict=True))
             self.assertTrue(any("Fuite spécifique" in e for e in bad_rep.errors), bad_rep.errors)
 
+            bad_mod_plug = Path(tmp) / "bad-mod-plugin"
+            shutil.copytree(PLUGIN_ROOT, bad_mod_plug, ignore=shutil.ignore_patterns("__pycache__", "*.pyc"))
+            mod_path = bad_mod_plug / "config" / "module.json"
+            mod_data = json.loads(mod_path.read_text(encoding="utf-8"))
+            mod_data["schema_version"] = 99
+            mod_data["commands"] = ["gravity-architect"]
+            mod_path.write_text(json.dumps(mod_data), encoding="utf-8")
+            mod_rep = validate.Report()
+            validate.validate_plugin(bad_mod_plug, mod_rep)
+            self.assertFalse(mod_rep.ok(strict=True))
+            joined = " | ".join(mod_rep.errors)
+            self.assertIn("schema_version", joined)
+            self.assertIn("commands", joined)
+
+            mod_path.unlink()
+            missing_mod_rep = validate.Report()
+            validate.validate_plugin(bad_mod_plug, missing_mod_rep)
+            self.assertFalse(missing_mod_rep.ok(strict=True))
+            self.assertTrue(any("config/module.json" in e for e in missing_mod_rep.errors))
+
     def test_install_copy_check_dry_run_install_upgrade_and_uninstall(self) -> None:
+        self.assertEqual(install.PLUGIN_SOURCE, REPO_ROOT / "plugin")
         with tempfile.TemporaryDirectory() as tmp:
             target = Path(tmp) / "plugins" / "gravity-architect"
             self.assertEqual(install.main(["--check", "--target", str(target)]), 0)
@@ -96,6 +119,7 @@ class TestInitAndInstall(unittest.TestCase):
             # Installation réelle
             self.assertEqual(install.main(["--target", str(target)]), 0)
             self.assertTrue(install.is_gravity_architect_plugin_dir(target))
+            self.assertTrue((target / "config" / "module.json").is_file())
 
             # Refus sans --force
             self.assertEqual(install.main(["--target", str(target)]), 1)

@@ -123,8 +123,8 @@ def init_workspace(
             "role": f"Projet suivi ({pid})",
         }
         if preset == "antigravity-plugin":
-            entry["plugin_manifest"] = f"{pid}-plugin/plugin.json"
-            entry["validator_script"] = f"{pid}-plugin/scripts/validate.py"
+            entry["plugin_manifest"] = "plugin/plugin.json"
+            entry["validator_script"] = "plugin/scripts/validate.py"
         cfg_projects.append(entry)
     cfg["projects"] = cfg_projects
 

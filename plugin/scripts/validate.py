@@ -29,6 +29,18 @@ OFFICIAL_PLUGIN_FIELDS = {
     "disabled",
 }
 ALLOWED_LOCAL_MODULES = {"sync_tracking", "init_workspace", "validate"}
+MODULE_CONTRACT_FIELDS = {
+    "schema_version",
+    "id",
+    "plugin_name",
+    "role",
+    "storage",
+    "commands",
+    "capabilities",
+    "ui",
+    "signals",
+}
+ALLOWED_UI_MODES = {"none", "core", "native-mcp-app", "transition-sidecar"}
 
 FORBIDDEN_MOD_RE = re.compile(r"\bMod" + r"ule\s+0?\d\b", re.IGNORECASE)
 PRIVATE_LEAK_RES = (
@@ -174,6 +186,96 @@ def _validate_manifest(root: Path, report: Report) -> None:
             report.error(f"Logo {logo_rel} : viewBox carré 1:1 non détecté.")
 
 
+def _validate_module_contract(root: Path, report: Report) -> None:
+    """Valide le contrat module Gravity `config/module.json` (schema_version 1)."""
+    module_path = root / "config" / "module.json"
+    if not module_path.is_file():
+        report.error("config/module.json introuvable.")
+        return
+
+    raw_bytes = module_path.read_bytes()
+    if raw_bytes.startswith(b"\xef\xbb\xbf"):
+        report.error("config/module.json ne doit pas contenir de BOM UTF-8.")
+
+    try:
+        mod = json.loads(raw_bytes.decode("utf-8-sig"))
+    except Exception as exc:
+        report.error(f"config/module.json invalide : {exc}")
+        return
+
+    if not isinstance(mod, dict):
+        report.error("config/module.json doit contenir un objet JSON.")
+        return
+
+    unknown_keys = sorted(set(mod.keys()) - MODULE_CONTRACT_FIELDS)
+    if unknown_keys:
+        report.error(f"config/module.json : champs non reconnus : {unknown_keys}")
+
+    missing_keys = sorted(MODULE_CONTRACT_FIELDS - set(mod.keys()))
+    if missing_keys:
+        report.error(f"config/module.json : champs requis manquants : {missing_keys}")
+
+    sv = mod.get("schema_version")
+    if isinstance(sv, bool) or sv != 1:
+        report.error(f"config/module.json : 'schema_version' doit valoir 1 (obtenu {sv!r}).")
+
+    mod_id = mod.get("id")
+    if not isinstance(mod_id, str) or not re.match(r"^[a-z0-9][a-z0-9-]{0,31}$", mod_id):
+        report.error(f"config/module.json : 'id' invalide ({mod_id!r}).")
+
+    plugin_name = mod.get("plugin_name")
+    if not isinstance(plugin_name, str) or plugin_name != "gravity-architect":
+        report.error(
+            f"config/module.json : 'plugin_name' doit être 'gravity-architect' (obtenu {plugin_name!r})."
+        )
+
+    role = mod.get("role")
+    if not isinstance(role, str) or not role.strip():
+        report.error("config/module.json : 'role' doit être une chaîne non vide.")
+
+    storage = mod.get("storage")
+    if not isinstance(storage, dict):
+        report.error("config/module.json : 'storage' doit être un objet JSON.")
+    else:
+        for sk in ("subdir", "env_override"):
+            val = storage.get(sk)
+            if not isinstance(val, str) or not val.strip():
+                report.error(f"config/module.json : 'storage.{sk}' doit être une chaîne non vide.")
+
+    for list_field in ("commands", "capabilities"):
+        vals = mod.get(list_field)
+        if (
+            not isinstance(vals, list)
+            or not vals
+            or not all(isinstance(x, str) and x.strip() for x in vals)
+        ):
+            report.error(f"config/module.json : '{list_field}' doit être une liste non vide de chaînes.")
+        elif list_field == "commands" and not all(x.startswith("/") for x in vals):
+            report.error("config/module.json : chaque entrée de 'commands' doit commencer par '/'.")
+
+    ui = mod.get("ui")
+    if not isinstance(ui, dict):
+        report.error("config/module.json : 'ui' doit être un objet JSON.")
+    else:
+        if ui.get("mode") not in ALLOWED_UI_MODES:
+            report.error(f"config/module.json : 'ui.mode' invalide ({ui.get('mode')!r}).")
+        if not isinstance(ui.get("target"), str) or not ui["target"].strip():
+            report.error("config/module.json : 'ui.target' doit être une chaîne non vide.")
+
+    signals = mod.get("signals")
+    if not isinstance(signals, dict):
+        report.error("config/module.json : 'signals' doit être un objet JSON.")
+    else:
+        for sig_key in ("produces", "consumes"):
+            svals = signals.get(sig_key)
+            if not isinstance(svals, list) or not all(
+                isinstance(x, str) and x.strip() for x in svals
+            ):
+                report.error(
+                    f"config/module.json : 'signals.{sig_key}' doit être une liste de chaînes."
+                )
+
+
 def _validate_skills(root: Path, report: Report) -> None:
     skills_dir = root / "skills"
     if not skills_dir.is_dir():
@@ -234,6 +336,10 @@ def _validate_rules_and_templates(root: Path, report: Report) -> None:
             data = json.loads(tpl_cfg.read_text(encoding="utf-8"))
             if not isinstance(data, dict) or data.get("schema_version") != 5:
                 report.error("templates/projects.json doit définir schema_version=5.")
+            elif "privacy" in data:
+                priv = data["privacy"]
+                if not isinstance(priv, dict) or not isinstance(priv.get("public_mode"), bool):
+                    report.error("templates/projects.json : 'privacy.public_mode' doit être un booléen.")
         except Exception as exc:
             report.error(f"templates/projects.json invalide : {exc}")
 
@@ -309,12 +415,13 @@ def _run_e2e_dry_run(root: Path, report: Report) -> None:
 
 
 def validate_plugin(root: Path, report: Report) -> None:
-    """Audite la structure, le manifeste, les templates, la stdlib et l'absence de fuites."""
+    """Audite la structure, le manifeste, le contrat module, les templates, la stdlib et l'absence de fuites."""
     _validate_manifest(root, report)
+    _validate_module_contract(root, report)
     _validate_skills(root, report)
     _validate_rules_and_templates(root, report)
 
-    for sub in ("assets", "rules", "scripts", "skills", "templates"):
+    for sub in ("assets", "config", "rules", "scripts", "skills", "templates"):
         if not (root / sub).is_dir():
             report.error(f"Dossier requis manquant : {sub}/")
 

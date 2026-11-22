@@ -1,0 +1,30 @@
+{
+  "schema_version": 1,
+  "id": "architect",
+  "plugin_name": "gravity-architect",
+  "role": "Conception, integrite ecosysteme, stockage Hot/Cold, veille plateforme et mise a niveau",
+  "storage": {
+    "subdir": "architect",
+    "env_override": "GRAVITY_ARCHITECT_HOME"
+  },
+  "commands": [
+    "/gravity-architect"
+  ],
+  "capabilities": [
+    "design-workshop",
+    "ecosystem-integrity",
+    "data-watch",
+    "upgrade-audit"
+  ],
+  "ui": {
+    "mode": "none",
+    "target": "gravity"
+  },
+  "signals": {
+    "produces": [
+      "ecosystem-health",
+      "upgrade-deltas"
+    ],
+    "consumes": []
+  }
+}

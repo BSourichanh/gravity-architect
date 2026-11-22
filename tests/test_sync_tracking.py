@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Tests unitaires pour gravity-architect-plugin/scripts/sync_tracking.py (100 % stdlib)."""
+"""Tests unitaires pour plugin/scripts/sync_tracking.py (100 % stdlib)."""
 
 from __future__ import annotations
 
@@ -16,7 +16,7 @@ import unittest
 from unittest import mock
 
 PLUGIN_SCRIPTS = (
-    Path(__file__).resolve().parent.parent / "gravity-architect-plugin" / "scripts"
+    Path(__file__).resolve().parent.parent / "plugin" / "scripts"
 )
 sys.path.insert(0, str(PLUGIN_SCRIPTS))
 
@@ -836,6 +836,263 @@ class TestSyncTracking(unittest.TestCase):
             self.assertEqual(snap["environment"]["installed_plugins"], [])
             self.assertEqual(_git(repo, "rev-parse", "HEAD").strip(), before_head)
             self.assertEqual(_git(repo, "status", "--porcelain"), "")
+
+    def test_default_architect_home_precedence_and_workspace_isolation(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            fake_home = root / "userhome"
+            g_home = root / "gravity_home"
+            arch_home = root / "architect_home"
+            ws = root / "atelier"
+            ws.mkdir()
+            (ws / "projects.json").write_text("{}\n", encoding="utf-8")
+
+            self.assertEqual(
+                sync_tracking.default_architect_home(env={}, home_dir=fake_home),
+                (fake_home / ".gemini" / "gravity" / "architect").resolve(),
+            )
+            self.assertEqual(
+                sync_tracking.default_architect_home(
+                    env={"GRAVITY_HOME": str(g_home)},
+                    home_dir=fake_home,
+                ),
+                (g_home / "architect").resolve(),
+            )
+            self.assertEqual(
+                sync_tracking.default_architect_home(
+                    env={
+                        "GRAVITY_ARCHITECT_HOME": str(arch_home),
+                        "GRAVITY_HOME": str(g_home),
+                    },
+                    home_dir=fake_home,
+                ),
+                arch_home.resolve(),
+            )
+
+            # Ne doit pas casser la précédence --workspace > $GRAVITY_ARCHITECT_WORKSPACE > .
+            ws_env = root / "env_atelier"
+            ws_env.mkdir()
+            (ws_env / "projects.json").write_text("{}\n", encoding="utf-8")
+            res_ws, _ = sync_tracking.resolve_workspace_root(
+                workspace_arg=ws,
+                cwd=root,
+                env={
+                    "GRAVITY_ARCHITECT_HOME": str(arch_home),
+                    "GRAVITY_ARCHITECT_WORKSPACE": str(ws_env),
+                },
+            )
+            self.assertEqual(res_ws, ws.resolve())
+            res_env, _ = sync_tracking.resolve_workspace_root(
+                cwd=root,
+                env={
+                    "GRAVITY_ARCHITECT_HOME": str(arch_home),
+                    "GRAVITY_ARCHITECT_WORKSPACE": str(ws_env),
+                },
+            )
+            self.assertEqual(res_env, ws_env.resolve())
+
+    def test_plugin_manifest_autodetection_order_and_validator_derivation(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            repo = root / "alpha"
+            _init_demo_repo(repo, compliant=True)
+
+            # 1. plugin/plugin.json prioritaire même si {id}-plugin/plugin.json et plugin.json existent
+            (repo / "alpha-plugin" / "scripts").mkdir(parents=True)
+            (repo / "alpha-plugin" / "plugin.json").write_text('{"name":"alpha","version":"0.0.1"}', encoding="utf-8")
+            (repo / "alpha-plugin" / "scripts" / "validate.py").write_text("# ok\n", encoding="utf-8")
+            (repo / "plugin.json").write_text('{"name":"alpha","version":"0.0.2"}', encoding="utf-8")
+
+            cfg = {"id": "alpha", "preset": "antigravity-plugin"}
+            m1 = sync_tracking.detect_plugin_manifest(cfg, repo)
+            self.assertEqual(m1, "plugin/plugin.json")
+            self.assertEqual(sync_tracking.derive_validator_script(cfg, m1), "plugin/scripts/validate.py")
+            self.assertEqual(sync_tracking.detect_version_source(cfg, repo), "plugin/plugin.json")
+            comp1 = sync_tracking.evaluate_project_compliance(cfg, repo)
+            self.assertTrue(comp1["ok"], comp1["issues"])
+
+            # 2. Sans plugin/, {id}-plugin/plugin.json gagne sur plugin.json racine
+            shutil.rmtree(repo / "plugin")
+            m2 = sync_tracking.detect_plugin_manifest(cfg, repo)
+            self.assertEqual(m2, "alpha-plugin/plugin.json")
+            self.assertEqual(sync_tracking.derive_validator_script(cfg, m2), "alpha-plugin/scripts/validate.py")
+
+            # 3. Sans plugin/ ni {id}-plugin/, plugin.json racine est détecté et dérive scripts/validate.py
+            shutil.rmtree(repo / "alpha-plugin")
+            m3 = sync_tracking.detect_plugin_manifest(cfg, repo)
+            self.assertEqual(m3, "plugin.json")
+            self.assertEqual(sync_tracking.derive_validator_script(cfg, m3), "scripts/validate.py")
+            comp3 = sync_tracking.evaluate_project_compliance(cfg, repo)
+            self.assertFalse(comp3["ok"])
+            self.assertIn("scripts/validate.py manquant", comp3["issues"])
+
+    def test_privacy_public_mode_true_and_false(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            repo = root / "demo"
+            _init_demo_repo(repo, compliant=True)
+
+            fake_home = root / "home"
+            plugins_dir = fake_home / "config" / "plugins"
+            inst_demo = plugins_dir / "demo"
+            shutil.copytree(repo / "plugin", inst_demo)
+            other_plug = plugins_dir / "third-party-secret"
+            other_plug.mkdir(parents=True)
+            (other_plug / "plugin.json").write_text(
+                json.dumps({"name": "third-party-secret", "version": "9.9.9"}),
+                encoding="utf-8",
+            )
+            (plugins_dir / "third-party-orphan" / "sidecars").mkdir(parents=True)
+
+            ws = root / "atelier"
+            (ws / "tracking" / "projects").mkdir(parents=True)
+            (ws / "AGENTS.md").write_text("# Architect\n", encoding="utf-8")
+            eco_tpl = (
+                "# Eco\n"
+                "<!-- AUTO:START:ecosystem-meta -->\n<!-- AUTO:END:ecosystem-meta -->\n"
+                "<!-- AUTO:START:ecosystem-projects -->\n<!-- AUTO:END:ecosystem-projects -->\n"
+                "<!-- AUTO:START:ecosystem-watches -->\n<!-- AUTO:END:ecosystem-watches -->\n"
+                "<!-- AUTO:START:ecosystem-artifacts -->\n<!-- AUTO:END:ecosystem-artifacts -->\n"
+                "<!-- AUTO:START:ecosystem-hygiene -->\n<!-- AUTO:END:ecosystem-hygiene -->\n"
+            )
+            card_tpl = (
+                "# Demo\n<!-- AUTO:START:project-meta:demo -->\n<!-- AUTO:END:project-meta:demo -->\n"
+                "<!-- AUTO:START:project-handoffs:demo -->\n<!-- AUTO:END:project-handoffs:demo -->\n"
+            )
+
+            base_cfg = {
+                "schema_version": 5,
+                "default_preset": "antigravity-plugin",
+                "watches": [],
+                "projects": [
+                    {
+                        "id": "demo",
+                        "name": "Demo",
+                        "path": str(repo),
+                        "preset": "antigravity-plugin",
+                        "changelog": "CHANGELOG.md",
+                        "agents_file": "AGENTS.md",
+                        "main_branch": "main",
+                        "default_dev_branch": "dev",
+                        "role": "Demo plugin",
+                    }
+                ],
+            }
+
+            # 1. Défaut public_mode=False : comportement historique complet
+            (ws / "ECOSYSTEM.md").write_text(eco_tpl, encoding="utf-8")
+            (ws / "tracking" / "projects" / "demo.md").write_text(card_tpl, encoding="utf-8")
+            cfg_path = ws / "projects.json"
+            cfg_path.write_text(json.dumps(base_cfg), encoding="utf-8")
+            self.assertFalse(sync_tracking.resolve_public_mode(base_cfg))
+
+            fake_agy = str(fake_home / "bin" / "agy")
+            with (
+                mock.patch.object(sync_tracking.shutil, "which", return_value=fake_agy),
+                mock.patch.object(sync_tracking, "run_readonly_cmd", wraps=sync_tracking.run_readonly_cmd) as _,
+            ):
+                sync_tracking.run_sync(
+                    config_path=cfg_path,
+                    gemini_home=fake_home,
+                    concept_root=ws,
+                    offline=True,
+                )
+            eco_priv = (ws / "ECOSYSTEM.md").read_text(encoding="utf-8")
+            snap_md_priv = (ws / "tracking" / "snapshots" / "ecosystem_snapshot.md").read_text(encoding="utf-8")
+            self.assertIn("third-party-secret@9.9.9", eco_priv)
+            self.assertIn("third-party-orphan", eco_priv)
+            self.assertIn(str(repo), snap_md_priv)
+
+            # 2. Mode public via privacy.public_mode=True (et test top-level public_mode=True)
+            for pub_cfg in (
+                {**base_cfg, "privacy": {"public_mode": True}},
+                {**base_cfg, "public_mode": True},
+            ):
+                self.assertTrue(sync_tracking.resolve_public_mode(pub_cfg))
+                (ws / "ECOSYSTEM.md").write_text(eco_tpl, encoding="utf-8")
+                (ws / "tracking" / "projects" / "demo.md").write_text(card_tpl, encoding="utf-8")
+                shutil.rmtree(ws / "tracking" / "snapshots", ignore_errors=True)
+                cfg_path.write_text(json.dumps(pub_cfg), encoding="utf-8")
+
+                with mock.patch.object(sync_tracking.shutil, "which", return_value=fake_agy):
+                    _, delta_pub = sync_tracking.run_sync(
+                        config_path=cfg_path,
+                        gemini_home=fake_home,
+                        concept_root=ws,
+                        offline=True,
+                        ack_editorial=True,
+                    )
+                eco_pub = (ws / "ECOSYSTEM.md").read_text(encoding="utf-8")
+                card_pub = (ws / "tracking" / "projects" / "demo.md").read_text(encoding="utf-8")
+                snap_md_pub = (ws / "tracking" / "snapshots" / "ecosystem_snapshot.md").read_text(encoding="utf-8")
+                delta_md_pub = (ws / "tracking" / "snapshots" / "delta.md").read_text(encoding="utf-8")
+
+                # (a) Seuls les plugins des projets suivis apparaissent dans ECOSYSTEM.md
+                self.assertIn("demo@0.1.0", eco_pub)
+                self.assertNotIn("third-party-secret", eco_pub)
+                self.assertNotIn("third-party-secret", snap_md_pub)
+
+                # (b) Aucune alerte orphan_plugin_dirs pour les répertoires tiers
+                self.assertNotIn("third-party-orphan", eco_pub)
+                self.assertNotIn("third-party-orphan", delta_md_pub)
+                self.assertNotIn("third-party-orphan", snap_md_pub)
+                self.assertFalse(any("third-party-orphan" in a for a in delta_pub["hygiene_alerts"]))
+
+                # (c) Aucun chemin absolu machine dans les 4 Markdown générés
+                self.assertIn("<repo:demo>", eco_pub)
+                self.assertIn("<repo:demo>", card_pub)
+                self.assertIn("<repo:demo>", snap_md_pub)
+                forbidden_paths = [
+                    str(repo),
+                    str(fake_home),
+                    str(plugins_dir),
+                    str(inst_demo),
+                    str(ws),
+                    str(Path.home()),
+                    fake_agy,
+                ]
+                for md_name, md_text in (
+                    ("ECOSYSTEM.md", eco_pub),
+                    ("demo.md", card_pub),
+                    ("ecosystem_snapshot.md", snap_md_pub),
+                    ("delta.md", delta_md_pub),
+                ):
+                    for forbidden in forbidden_paths:
+                        self.assertNotIn(forbidden, md_text, f"{forbidden} leaked in {md_name}")
+                        self.assertNotIn(
+                            forbidden.replace("\\", "/"),
+                            md_text,
+                            f"{forbidden} leaked (posix) in {md_name}",
+                        )
+                    self.assertIsNone(
+                        sync_tracking.MACHINE_ABS_PATH_RE.search(md_text),
+                        f"Regex matched machine path in {md_name}: {md_text}",
+                    )
+
+            # Stabilise l'état après acquittement et vérifie l'idempotence (0 churn) sous public_mode=True
+            with mock.patch.object(sync_tracking.shutil, "which", return_value=fake_agy):
+                sync_tracking.run_sync(
+                    config_path=cfg_path,
+                    gemini_home=fake_home,
+                    concept_root=ws,
+                    offline=True,
+                )
+                watched = [
+                    ws / "ECOSYSTEM.md",
+                    ws / "tracking" / "projects" / "demo.md",
+                    ws / "tracking" / "snapshots" / "ecosystem_snapshot.md",
+                    ws / "tracking" / "snapshots" / "delta.md",
+                ]
+                mtimes = {p: p.stat().st_mtime_ns for p in watched}
+                _, delta_2 = sync_tracking.run_sync(
+                    config_path=cfg_path,
+                    gemini_home=fake_home,
+                    concept_root=ws,
+                    offline=True,
+                )
+                self.assertEqual(delta_2["auto_updated_files"], [])
+                for p in watched:
+                    self.assertEqual(p.stat().st_mtime_ns, mtimes[p], str(p))
 
 
 if __name__ == "__main__":
