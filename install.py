@@ -16,7 +16,7 @@ import tempfile
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 REPO_ROOT = Path(__file__).resolve().parent
-PLUGIN_SOURCE = REPO_ROOT / "gravity-architect-plugin"
+PLUGIN_SOURCE = REPO_ROOT / "plugin"
 PLUGIN_NAME = "gravity-architect"
 
 EXEC_SCRIPTS: Tuple[str, ...] = (
