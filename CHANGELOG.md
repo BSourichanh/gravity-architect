@@ -5,6 +5,20 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.0] - 2026-11-22
+
+### Added
+- **Isolated Code & Architecture Audits (`audits/code/` & `/gravity-architect audit [projet|all]`):**
+  - Added `plugin/templates/audit-code-readme.md` (index & audit journal strictly isolated from `audits/agents/`) and `plugin/templates/audit-code-template.md` (`CODE-XX-N` `P0`/`P1`/`P2`, KISS/YAGNI/DRY/SOLID/CUPID, invariants/`module.json`/Hot-Cold, security/hygiene/tests).
+  - Updated `plugin/scripts/init_workspace.py` to idempotently deploy `audits/code/README.md`, `audits/code/_TEMPLATE.md`, and `audits/agents/.gitkeep` (preserving existing files unless `--force`).
+  - Added `"audit-code-readme.md"` and `"audit-code-template.md"` to `REQUIRED_TEMPLATES` in `plugin/scripts/validate.py`.
+  - Documented `/gravity-architect audit [projet|all]` in `plugin/skills/gravity-architect/SKILL.md`, `plugin/rules/AGENTS.md` (< 2 048 B, no YAML frontmatter), `README.md`, and `plugin/README.md`.
+- **Unit Tests:** added isolated `unittest` coverage in `tests/test_init_and_install.py` and `tests/test_sync_tracking.py` for `audits/code/` idempotent deployment, compact archived handoffs (`ECOSYSTEM.md` & project cards), and SemVer CLI comparison (`compute_delta_with_state` & `apply_auto_doc_updates`).
+
+### Fixed
+- **AUD-01-04 (Hot Budget `ECOSYSTEM.md <= 6 000 B`):** compacted `_build_ecosystem_blocks()` in `plugin/scripts/sync_tracking.py` to render `archived_handoffs` as a single summary line, and capped `_format_project_handoffs_block()` on project cards to the 3 most recent entries plus `(+N plus anciens dans \`handoffs/archive/\`)`.
+- **AUD-01-05 (SemVer CLI Comparison):** added `_parse_semver_tuple()` and `_compare_cli_versions()` in `plugin/scripts/sync_tracking.py` so `local >= latest` (e.g. `1.5.14` vs `v1.5.12`) never triggers false-positive `en retrait` alerts in `compute_delta_with_state()`, and `apply_auto_doc_updates()` distinguishes `*(en avance)*`, `*(écart)*`, and equal versions (with string fallback for non-SemVer values).
+
 ## [0.3.0] - 2026-11-22
 
 ### Added

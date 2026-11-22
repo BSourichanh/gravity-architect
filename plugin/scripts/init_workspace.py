@@ -567,6 +567,8 @@ def init_workspace(
     card_tpl = (templates_dir / "project-card-template.md").read_text(encoding="utf-8")
     impact_tpl = (templates_dir / "impact-template.md").read_text(encoding="utf-8")
     archives_readme = (templates_dir / "archives-readme.md").read_text(encoding="utf-8")
+    audit_code_readme = (templates_dir / "audit-code-readme.md").read_text(encoding="utf-8")
+    audit_code_tpl = (templates_dir / "audit-code-template.md").read_text(encoding="utf-8")
 
     cfg = json.loads((templates_dir / "projects.json").read_text(encoding="utf-8"))
     cfg["workspace_name"] = name
@@ -602,6 +604,9 @@ def init_workspace(
         (ws_root / "tracking" / "snapshots" / ".gitkeep", ""),
         (ws_root / "archives" / "README.md", archives_readme),
         (ws_root / "archives" / "changelogs" / ".gitkeep", ""),
+        (ws_root / "audits" / "code" / "README.md", audit_code_readme),
+        (ws_root / "audits" / "code" / "_TEMPLATE.md", audit_code_tpl),
+        (ws_root / "audits" / "agents" / ".gitkeep", ""),
     ]
 
     if deploy_antigravity_impact:

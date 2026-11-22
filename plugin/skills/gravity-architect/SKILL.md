@@ -2,7 +2,7 @@
 name: gravity-architect
 description: >-
   Orchestre un atelier générique de conception, specs, handoffs, architecture Hot/Cold
-  et suivi multi-projets lecture seule. Activer sur /gravity-architect [init|add|sync|status|spec|handoff|archive]
+  et suivi multi-projets lecture seule. Activer sur /gravity-architect [init|add|sync|status|spec|handoff|archive|audit]
   ou lors d'une mise à jour d'un dépôt suivi.
 ---
 
@@ -63,3 +63,8 @@ description: >-
 - **`spec <slug>` :** challenger le besoin, vérifier les solutions natives/existantes avant d'ajouter du code, puis créer `specs/<YYYY-MM-DD>-<slug>.md` depuis `specs/_TEMPLATE.md`.
 - **`handoff <projet> <slug>` :** créer `handoffs/<YYYY-MM-DD>-<projet>-<slug>.md` depuis `handoffs/_TEMPLATE.md` avec décisions figées, périmètre, invariants de `tracking/projects/<projet>.md` et commandes de vérification.
 - **`archive <slug>` :** déplacer la spec et les handoffs livrés vers `specs/archive/` et `handoffs/archive/` (statut `done`), actualiser les pistes actives puis exécuter `--offline --ack-editorial --print-delta`.
+
+### 6. `/gravity-architect audit [projet|all]` *(audit Code & Architecture)*
+- Auditer en **lecture seule absolue** le ou les dépôts suivis (`projet` ciblé ou `all` par défaut) uniquement sur les axes **Code & Architecture** *(jamais d'audit agent ni de collecte de métriques)*.
+- Rédiger `audits/code/<YYYY-MM-DD>-audit-code-<cible>.md` depuis `audits/code/_TEMPLATE.md` avec constats `CODE-XX-N` (`P0` / `P1` / `P2`) et plan d'actions priorisé.
+- Mettre à jour le tableau **Journal des audits** dans `audits/code/README.md` *(strictement isolé d'`audits/agents/`)*.

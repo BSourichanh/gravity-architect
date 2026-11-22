@@ -394,6 +394,43 @@ class TestInitAndInstall(unittest.TestCase):
             self.assertEqual([p["id"] for p in cfg["projects"]], ["repo-one", "repo-two"])
             self.assertTrue((ws / "tracking" / "projects" / "repo-two.md").is_file())
 
+    def test_init_deploys_audits_code_and_agents_gitkeep_idempotently(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            ws = Path(tmp) / "atelier"
+            res = init_workspace.init_workspace(ws, name="Atelier Audit")
+
+            self.assertIn("audits/code/README.md", res["created"])
+            self.assertIn("audits/code/_TEMPLATE.md", res["created"])
+            self.assertIn("audits/agents/.gitkeep", res["created"])
+
+            readme_path = ws / "audits" / "code" / "README.md"
+            tpl_path = ws / "audits" / "code" / "_TEMPLATE.md"
+            gitkeep_path = ws / "audits" / "agents" / ".gitkeep"
+
+            self.assertEqual(gitkeep_path.read_bytes(), b"")
+            for fpath in (readme_path, tpl_path):
+                raw = fpath.read_bytes()
+                self.assertFalse(raw.startswith(b"\xef\xbb\xbf"), str(fpath))
+                self.assertNotIn(b"\r\n", raw, str(fpath))
+
+            # Préservation sans --force
+            readme_path.write_text("# Custom Journal\n", encoding="utf-8")
+            tpl_path.write_text("# Custom Template\n", encoding="utf-8")
+            res2 = init_workspace.init_workspace(ws, name="Atelier Audit 2")
+            self.assertIn("audits/code/README.md", res2["skipped"])
+            self.assertIn("audits/code/_TEMPLATE.md", res2["skipped"])
+            self.assertIn("audits/agents/.gitkeep", res2["skipped"])
+            self.assertEqual(readme_path.read_text(encoding="utf-8"), "# Custom Journal\n")
+            self.assertEqual(tpl_path.read_text(encoding="utf-8"), "# Custom Template\n")
+
+            # Écrasement avec --force
+            res3 = init_workspace.init_workspace(ws, name="Atelier Audit Reset", force=True)
+            self.assertIn("audits/code/README.md", res3["updated"])
+            self.assertIn("audits/code/_TEMPLATE.md", res3["updated"])
+            self.assertIn("audits/agents/.gitkeep", res3["updated"])
+            self.assertIn("Journal des audits", readme_path.read_text(encoding="utf-8"))
+            self.assertIn("CODE-XX-N", tpl_path.read_text(encoding="utf-8"))
+
 
 if __name__ == "__main__":
     unittest.main()

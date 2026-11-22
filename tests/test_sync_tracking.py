@@ -1094,6 +1094,176 @@ class TestSyncTracking(unittest.TestCase):
                 for p in watched:
                     self.assertEqual(p.stat().st_mtime_ns, mtimes[p], str(p))
 
+    def test_archived_handoffs_compact_summary_and_project_cap(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            ws = Path(tmp)
+            archived_many = [
+                {
+                    "filename": f"2026-11-{i:02d}-alpha-lot-{i:02d}.md",
+                    "rel_path": f"handoffs/archive/2026-11-{i:02d}-alpha-lot-{i:02d}.md",
+                    "title": f"Lot {i}",
+                    "status": "done",
+                    "target_project": "alpha",
+                }
+                for i in range(1, 13)
+            ]
+            snap_base = {
+                "synced_at": "2026-11-22T12:00:00+01:00",
+                "environment": {},
+                "projects": [],
+                "watches": {},
+                "artifacts": {
+                    "specs": [],
+                    "archived_specs": [],
+                    "pending_handoffs": [],
+                    "archived_handoffs": archived_many,
+                },
+            }
+            blocks_many = sync_tracking._build_ecosystem_blocks(
+                snap_base, {"hygiene_alerts": []}, ws, public_mode=False
+            )
+            art_lines = blocks_many["ecosystem-artifacts"].splitlines()
+            archived_lines = [ln for ln in art_lines if "Handoffs archivés" in ln or "handoffs/archive/2026-" in ln]
+            self.assertEqual(len(archived_lines), 1)
+            self.assertEqual(
+                archived_lines[0],
+                "- **Handoffs archivés (`handoffs/archive/`) :** 12 "
+                "*(dernier : [`2026-11-12-alpha-lot-12.md`](handoffs/archive/2026-11-12-alpha-lot-12.md))*",
+            )
+
+            snap_empty = {
+                **snap_base,
+                "artifacts": {
+                    "specs": [],
+                    "archived_specs": [],
+                    "pending_handoffs": [],
+                    "archived_handoffs": [],
+                },
+            }
+            blocks_empty = sync_tracking._build_ecosystem_blocks(
+                snap_empty, {"hygiene_alerts": []}, ws, public_mode=False
+            )
+            self.assertIn(
+                "- **Handoffs archivés (`handoffs/archive/`) :** aucun pour le moment.",
+                blocks_empty["ecosystem-artifacts"],
+            )
+
+            # _format_project_handoffs_block : <= 3 sans ligne de débordement
+            blk_3 = sync_tracking._format_project_handoffs_block(
+                "alpha",
+                {"pending_handoffs": [], "archived_handoffs": archived_many[:3]},
+            )
+            self.assertIn("2026-11-01-alpha-lot-01.md", blk_3)
+            self.assertIn("2026-11-03-alpha-lot-03.md", blk_3)
+            self.assertNotIn("plus anciens", blk_3)
+
+            # _format_project_handoffs_block : > 3 plafonné aux 3 plus récents + compteur
+            blk_5 = sync_tracking._format_project_handoffs_block(
+                "alpha",
+                {"pending_handoffs": [], "archived_handoffs": archived_many[:5]},
+            )
+            self.assertNotIn("2026-11-01-alpha-lot-01.md", blk_5)
+            self.assertNotIn("2026-11-02-alpha-lot-02.md", blk_5)
+            for idx in (3, 4, 5):
+                self.assertIn(f"2026-11-{idx:02d}-alpha-lot-{idx:02d}.md", blk_5)
+            self.assertIn("  - *(+2 plus anciens dans `handoffs/archive/`)*", blk_5)
+
+    def test_semver_parse_and_cli_version_comparison(self) -> None:
+        self.assertEqual(sync_tracking._parse_semver_tuple("v1.5.12"), (1, 5, 12))
+        self.assertEqual(sync_tracking._parse_semver_tuple("1.5.14"), (1, 5, 14))
+        self.assertEqual(sync_tracking._parse_semver_tuple("agy 1.5.14"), (1, 5, 14))
+        self.assertEqual(sync_tracking._parse_semver_tuple("v2.0"), (2, 0))
+        self.assertIsNone(sync_tracking._parse_semver_tuple("42"))
+        self.assertIsNone(sync_tracking._parse_semver_tuple("non détectée"))
+        self.assertIsNone(sync_tracking._parse_semver_tuple(""))
+
+        with tempfile.TemporaryDirectory() as tmp:
+            ws = Path(tmp)
+            (ws / "tracking" / "antigravity").mkdir(parents=True)
+            (ws / "ECOSYSTEM.md").write_text(
+                "# Eco\n"
+                "<!-- AUTO:START:ecosystem-meta -->\n<!-- AUTO:END:ecosystem-meta -->\n"
+                "<!-- AUTO:START:ecosystem-projects -->\n<!-- AUTO:END:ecosystem-projects -->\n"
+                "<!-- AUTO:START:ecosystem-watches -->\n<!-- AUTO:END:ecosystem-watches -->\n"
+                "<!-- AUTO:START:ecosystem-artifacts -->\n<!-- AUTO:END:ecosystem-artifacts -->\n"
+                "<!-- AUTO:START:ecosystem-hygiene -->\n<!-- AUTO:END:ecosystem-hygiene -->\n",
+                encoding="utf-8",
+            )
+            impact_path = ws / "tracking" / "antigravity" / "IMPACT.md"
+            impact_tpl = (
+                "# Impact\n"
+                "<!-- AUTO:START:watch-meta:antigravity -->\n<!-- AUTO:END:watch-meta:antigravity -->\n"
+            )
+
+            def _make_snap(local_ver: str | None) -> dict:
+                return {
+                    "synced_at": "2026-11-22T12:00:00+01:00",
+                    "environment": {"local_agy_version": local_ver, "installed_plugins": [], "orphan_plugin_dirs": []},
+                    "projects": [],
+                    "artifacts": {"specs": [], "archived_specs": [], "pending_handoffs": [], "archived_handoffs": []},
+                    "watches": {
+                        "antigravity": {
+                            "id": "antigravity",
+                            "name": "Google Antigravity",
+                            "source_url": "https://example.invalid/changelog.md",
+                            "impact_file": "tracking/antigravity/IMPACT.md",
+                            "fetch_status": "ok",
+                            "local_cli_check": {"cmd": "agy", "surface_slug": "cli"},
+                            "surfaces": {
+                                "cli": {
+                                    "heading": "CLI",
+                                    "latest_version": "v1.5.12",
+                                    "versions": ["v1.5.12"],
+                                }
+                            },
+                        }
+                    },
+                }
+
+            # 1. Local en avance ("1.5.14" et "agy 1.5.14" vs "v1.5.12") -> aucune alerte en retrait + *(en avance)*
+            for ahead_ver in ("1.5.14", "agy 1.5.14"):
+                impact_path.write_text(impact_tpl, encoding="utf-8")
+                snap = _make_snap(ahead_ver)
+                delta, _ = sync_tracking.compute_delta_with_state(None, snap, ws)
+                self.assertFalse(
+                    any("en retrait" in a for a in delta["hygiene_alerts"]),
+                    delta["hygiene_alerts"],
+                )
+                sync_tracking.apply_auto_doc_updates(ws, snap, delta)
+                impact_txt = impact_path.read_text(encoding="utf-8")
+                self.assertIn(f"`{ahead_ver}` local *(en avance)*", impact_txt)
+                self.assertNotIn("*(écart)*", impact_txt)
+
+            # 2. Local en retrait ("1.5.10" vs "v1.5.12") -> alerte en retrait + *(écart)*
+            impact_path.write_text(impact_tpl, encoding="utf-8")
+            snap_behind = _make_snap("1.5.10")
+            delta_behind, _ = sync_tracking.compute_delta_with_state(None, snap_behind, ws)
+            self.assertTrue(
+                any("en retrait" in a for a in delta_behind["hygiene_alerts"]),
+                delta_behind["hygiene_alerts"],
+            )
+            sync_tracking.apply_auto_doc_updates(ws, snap_behind, delta_behind)
+            self.assertIn("**`1.5.10` local** *(écart)*", impact_path.read_text(encoding="utf-8"))
+
+            # 3. Local égal ("1.5.12" vs "v1.5.12") -> aucune alerte + affichage neutre
+            impact_path.write_text(impact_tpl, encoding="utf-8")
+            snap_eq = _make_snap("1.5.12")
+            delta_eq, _ = sync_tracking.compute_delta_with_state(None, snap_eq, ws)
+            self.assertFalse(any("en retrait" in a for a in delta_eq["hygiene_alerts"]))
+            sync_tracking.apply_auto_doc_updates(ws, snap_eq, delta_eq)
+            impact_eq = impact_path.read_text(encoding="utf-8")
+            self.assertIn("| `1.5.12` local |", impact_eq)
+            self.assertNotIn("*(écart)*", impact_eq)
+            self.assertNotIn("*(en avance)*", impact_eq)
+
+            # 4. Fallback non parsable ("custom-build" vs "v1.5.12") -> alerte en retrait + *(écart)*
+            impact_path.write_text(impact_tpl, encoding="utf-8")
+            snap_raw = _make_snap("custom-build")
+            delta_raw, _ = sync_tracking.compute_delta_with_state(None, snap_raw, ws)
+            self.assertTrue(any("en retrait" in a for a in delta_raw["hygiene_alerts"]))
+            sync_tracking.apply_auto_doc_updates(ws, snap_raw, delta_raw)
+            self.assertIn("**`custom-build` local** *(écart)*", impact_path.read_text(encoding="utf-8"))
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -103,6 +103,32 @@ MACHINE_ABS_PATH_RE = re.compile(
     r"|(?<![:\w/])/(?:Users|home|var|tmp|opt|etc|mnt|Volumes|private|root)/[^\s`\"'<>|)\]]+"
     r")"
 )
+SEMVER_RE = re.compile(r"\bv?(\d+(?:\.\d+)+)")
+
+
+def _parse_semver_tuple(raw: str) -> tuple[int, ...] | None:
+    """Extrait un tuple SemVer numérique (au moins MAJOR.MINOR) depuis une chaîne."""
+    if not isinstance(raw, str):
+        return None
+    match = SEMVER_RE.search(raw.strip())
+    if not match:
+        return None
+    return tuple(int(part) for part in match.group(1).split("."))
+
+
+def _compare_cli_versions(local_raw: str, latest_raw: str) -> str:
+    """Compare une version CLI locale à la dernière connue ('behind'|'ahead'|'equal')."""
+    local_tuple = _parse_semver_tuple(local_raw)
+    latest_tuple = _parse_semver_tuple(latest_raw)
+    if local_tuple is not None and latest_tuple is not None:
+        if local_tuple < latest_tuple:
+            return "behind"
+        if local_tuple > latest_tuple:
+            return "ahead"
+        return "equal"
+    if local_raw.strip().lstrip("v") != latest_raw.strip().lstrip("v"):
+        return "behind"
+    return "equal"
 
 
 def _configure_utf8_stdio() -> None:
@@ -2506,7 +2532,11 @@ def compute_delta_with_state(
             surf_slug = str(cli_check.get("surface_slug") or "cli")
             local_cli_ver = env.get("local_agy_version") if cmd_name == "agy" else None
             surf_latest = ((winfo.get("surfaces") or {}).get(surf_slug) or {}).get("latest_version")
-            if local_cli_ver and surf_latest and local_cli_ver.lstrip("v") != str(surf_latest).lstrip("v"):
+            if (
+                local_cli_ver
+                and surf_latest
+                and _compare_cli_versions(str(local_cli_ver), str(surf_latest)) == "behind"
+            ):
                 hygiene_alerts.append(
                     f"`{cmd_name}` local (`{local_cli_ver}`) en retrait par rapport à "
                     f"{winfo.get('name', wid)} CLI (`{surf_latest}`)."
@@ -2762,9 +2792,13 @@ def _format_project_handoffs_block(pid: str, artifacts: dict) -> str:
         lines.append("- **Handoffs en attente (`handoffs/`) :** aucun.")
     if archived:
         lines.append("- **Handoffs archivés (`handoffs/archive/`) :**")
-        for h in archived:
+        for h in archived[-3:]:
             lines.append(
                 f"  - [`{h['filename']}`](../../{h['rel_path']}) (`{h['status']}`)"
+            )
+        if len(archived) > 3:
+            lines.append(
+                f"  - *(+{len(archived) - 3} plus anciens dans `handoffs/archive/`)*"
             )
     return "\n".join(lines)
 
@@ -2883,12 +2917,12 @@ def _build_ecosystem_blocks(
         art_lines.append(
             "- **Handoffs en attente (`handoffs/`) :** aucun *(modèle : [`handoffs/_TEMPLATE.md`](handoffs/_TEMPLATE.md))*."
         )
-    if artifacts["archived_handoffs"]:
-        art_lines.append("- **Handoffs archivés (`handoffs/archive/`) :**")
-        for h in artifacts["archived_handoffs"]:
-            art_lines.append(
-                f"  - [`{h['filename']}`]({h['rel_path']}) (`{h['status']}`, cible : `{h['target_project'] or 'n/a'}`)"
-            )
+    archived_handoffs = artifacts.get("archived_handoffs") or []
+    if archived_handoffs:
+        last_handoff = archived_handoffs[-1]
+        art_lines.append(
+            f"- **Handoffs archivés (`handoffs/archive/`) :** {len(archived_handoffs)} *(dernier : [`{last_handoff['filename']}`]({last_handoff['rel_path']}))*"
+        )
     else:
         art_lines.append("- **Handoffs archivés (`handoffs/archive/`) :** aucun pour le moment.")
 
@@ -3075,15 +3109,17 @@ def apply_auto_doc_updates(
         for slug, sinfo in (winfo.get("surfaces") or {}).items():
             latest = sinfo.get("latest_version") or "n/a"
             vers = ", ".join(f"`{v}`" for v in sinfo.get("versions") or []) or "n/a"
-            if (
-                isinstance(cli_check, dict)
-                and slug == cli_check.get("surface_slug")
-                and local_agy != "non détectée"
-                and local_agy.lstrip("v") != str(latest).lstrip("v")
-            ):
-                gap = f"**`{local_agy}` local** *(écart)*"
-            elif isinstance(cli_check, dict) and slug == cli_check.get("surface_slug"):
-                gap = f"`{local_agy}` local"
+            if isinstance(cli_check, dict) and slug == cli_check.get("surface_slug"):
+                if local_agy == "non détectée":
+                    gap = f"`{local_agy}` local"
+                else:
+                    cmp_state = _compare_cli_versions(str(local_agy), str(latest))
+                    if cmp_state == "behind":
+                        gap = f"**`{local_agy}` local** *(écart)*"
+                    elif cmp_state == "ahead":
+                        gap = f"`{local_agy}` local *(en avance)*"
+                    else:
+                        gap = f"`{local_agy}` local"
             else:
                 gap = "—"
             meta_lines.append(f"| **{sinfo.get('heading', slug)}** | `{latest}` | {vers} | {gap} |")

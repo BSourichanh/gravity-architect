@@ -70,6 +70,8 @@ REQUIRED_TEMPLATES = (
     "project-card-template.md",
     "impact-template.md",
     "archives-readme.md",
+    "audit-code-readme.md",
+    "audit-code-template.md",
 )
 
 

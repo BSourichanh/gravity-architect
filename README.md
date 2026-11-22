@@ -74,7 +74,12 @@ python plugin/scripts/sync_tracking.py --workspace ./mon-atelier --print-delta
 python plugin/scripts/sync_tracking.py --workspace ./mon-atelier --offline --ack-editorial --print-delta
 ```
 
-Dans Antigravity, utilisez ensuite `/gravity-architect [init|add|sync|status|spec|handoff|archive]` (voir [`plugin/README.md`](plugin/README.md)).
+Dans Antigravity, utilisez ensuite `/gravity-architect [init|add|sync|status|spec|handoff|archive|audit]` (voir [`plugin/README.md`](plugin/README.md)).
+
+### Audits Code & Architecture & suivi compact (`v0.4.0`)
+- **Audits isolés (`audits/code/`) :** `init_workspace.py` déploie `audits/code/README.md`, `audits/code/_TEMPLATE.md` et `audits/agents/.gitkeep` ; le dossier `audits/code/` reste strictement séparé d'`audits/agents/`.
+- **Commande `/gravity-architect audit [projet|all]` :** réalise un audit **Code & Architecture** en lecture seule sur les dépôts suivis, rédige `audits/code/<YYYY-MM-DD>-audit-code-<cible>.md` (`CODE-XX-N` `P0`/`P1`/`P2`) et met à jour le journal `audits/code/README.md`.
+- **Handoffs archivés compacts & SemVer CLI :** `ECOSYSTEM.md` résume `handoffs/archive/` sur 1 ligne, les fiches projet limitent l'historique archivé aux 3 plus récents, et la comparaison SemVer CLI distingue `en avance` et `écart` pour éviter les fausses alertes.
 
 ### Découverte, presets & confidentialité (`v0.3.0`)
 - **Découverte & ajout incrémental (`init_workspace.py`) :** `--discover [--scan-dir <dir>] [--json]` scanne en lecture seule (profondeur 1, sans jamais sortir du dossier cible implicitement) et `--add <chemin|id=chemin>` ajoute des projets *fail-closed* à un atelier existant.
@@ -97,7 +102,7 @@ python -m unittest discover -s tests -p "test_*.py" -v
 
 ## Documentation & Releases
 
-- [`CHANGELOG.md`](CHANGELOG.md) — Historique des releases (`v0.3.0`)
+- [`CHANGELOG.md`](CHANGELOG.md) — Historique des releases (`v0.4.0`)
 - [`plugin/README.md`](plugin/README.md) — Guide complet du plugin et des commandes `/gravity-architect`
 - [`AGENTS.md`](AGENTS.md) — Charte, invariants et vérifications obligatoires
 
