@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **CLI Parity (`install.py`):** added `--strict` (overrides `--skip-validate`, runs read-only strict validation in `--check`, passes `--strict` to `agy plugin validate`) and `--no-fix-python` (documented ecosystem parity no-op) to reach `11/11` installer CLI flags.
+
 ### Changed
 - **Docs & UX Alignment:** aligned `plugin/plugin.json` `suggestedPrompts` on `/cmd — résumé` (`<= 100` chars) and added the "Démarrage 2 min & Place dans l'écosystème" callout (**Palier 3 — Multi-projets**, `gravity` Core prerequisite, `/gravity-architect init` -> `/gravity-architect sync`, `gravity/docs/` hub links) to `README.md` and `plugin/README.md`.
 - **Modular Core Split (`plugin/core/`):** extracted `plugin/scripts/sync_tracking.py` and `plugin/scripts/init_workspace.py` into 6 cohesive SRP modules under `plugin/core/` (`io_utils.py`, `discovery.py`, `git_collector.py`, `watches.py`, `delta.py`, `renderers.py`, each `<= 650 L`, 100 % Python 3.10+ stdlib, atomic UTF-8 no-BOM / LF writes).

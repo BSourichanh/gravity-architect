@@ -158,6 +158,55 @@ class TestInitAndInstall(unittest.TestCase):
             self.assertEqual(install.main(["--uninstall", "--target", str(target)]), 0)
             self.assertFalse(target.exists())
 
+    def test_install_cli_strict_and_no_fix_python_flags(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            target = Path(tmp) / "plugins" / "gravity-architect"
+
+            # --dry-run --strict --no-fix-python (and --strict overrides --skip-validate), zero disk writes
+            dry_buf = io.StringIO()
+            with contextlib.redirect_stdout(dry_buf):
+                rc_dry = install.main(
+                    [
+                        "--dry-run",
+                        "--skip-validate",
+                        "--strict",
+                        "--no-fix-python",
+                        "--target",
+                        str(target),
+                    ]
+                )
+            self.assertEqual(rc_dry, 0)
+            self.assertIn("validate.py --strict", dry_buf.getvalue())
+            self.assertFalse(target.parent.exists())
+
+            # --check --strict passes in read-only mode with zero disk writes
+            chk_buf = io.StringIO()
+            with contextlib.redirect_stdout(chk_buf):
+                rc_chk = install.main(["--check", "--strict", "--target", str(target)])
+            self.assertEqual(rc_chk, 0)
+            self.assertIn("Strict validation: PASSED (0 error, 0 warning)", chk_buf.getvalue())
+            self.assertFalse(target.parent.exists())
+
+            # --check --strict returns 1 when strict validation fails
+            fail_proc = subprocess.CompletedProcess(
+                args=["validate.py"], returncode=1, stdout="", stderr="Strict error"
+            )
+            with mock.patch.object(install, "run_plugin_validation", return_value=fail_proc):
+                err_buf = io.StringIO()
+                with contextlib.redirect_stderr(err_buf):
+                    rc_fail = install.main(["--check", "--strict", "--target", str(target)])
+            self.assertEqual(rc_fail, 1)
+            self.assertIn("Strict validation: FAILED", err_buf.getvalue())
+
+            # --method agy --dry-run includes --strict on agy plugin validate
+            agy_buf = io.StringIO()
+            with mock.patch("shutil.which", return_value="/usr/bin/agy"):
+                with contextlib.redirect_stdout(agy_buf):
+                    rc_agy = install.main(["--method", "agy", "--dry-run"])
+            self.assertEqual(rc_agy, 0)
+            self.assertIn("plugin validate", agy_buf.getvalue())
+            self.assertIn("--strict", agy_buf.getvalue())
+
     def test_discover_repositories_scope_and_metadata_extraction(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
