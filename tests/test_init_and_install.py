@@ -431,6 +431,90 @@ class TestInitAndInstall(unittest.TestCase):
             self.assertIn("Journal des audits", readme_path.read_text(encoding="utf-8"))
             self.assertIn("CODE-XX-N", tpl_path.read_text(encoding="utf-8"))
 
+    def test_product_repo_guard_deploy_file_and_template_principles(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+
+            # 1. _deploy_file retourne un statut littéral sans muter de listes
+            sample = root / "sample.txt"
+            self.assertEqual(init_workspace._deploy_file(sample, "a\n", force=False), "created")
+            self.assertEqual(init_workspace._deploy_file(sample, "b\n", force=False), "skipped")
+            self.assertEqual(sample.read_text(encoding="utf-8"), "a\n")
+            self.assertEqual(init_workspace._deploy_file(sample, "b\n", force=True), "updated")
+            self.assertEqual(sample.read_text(encoding="utf-8"), "b\n")
+
+            # 2. Garde-fou dépôt produit : .git + manifeste sans projects.json -> refus
+            prod_repo = root / "prod-app"
+            _make_git_repo(prod_repo, branch="main")
+            (prod_repo / "package.json").write_text('{"name": "prod-app"}\n', encoding="utf-8")
+
+            err_buf = io.StringIO()
+            with contextlib.redirect_stderr(err_buf):
+                rc_refused = init_workspace.main(["--workspace", str(prod_repo)])
+            self.assertNotEqual(rc_refused, 0)
+            self.assertIn("package.json", err_buf.getvalue())
+            self.assertFalse((prod_repo / "projects.json").exists())
+            self.assertFalse((prod_repo / "ECOSYSTEM.md").exists())
+
+            # Refus propre en --json
+            json_buf = io.StringIO()
+            with contextlib.redirect_stdout(json_buf):
+                rc_json = init_workspace.main(["--workspace", str(prod_repo), "--json"])
+            self.assertNotEqual(rc_json, 0)
+            err_payload = json.loads(json_buf.getvalue())
+            self.assertFalse(err_payload["ok"])
+            self.assertIn("package.json", err_payload["error"])
+
+            # --force outrepasse le garde-fou, puis l'atelier existant reste idempotent sans --force
+            self.assertEqual(
+                init_workspace.main(["--workspace", str(prod_repo), "--force"]), 0
+            )
+            self.assertTrue((prod_repo / "projects.json").is_file())
+            self.assertEqual(init_workspace.main(["--workspace", str(prod_repo)]), 0)
+
+            # 3. Dossier avec .git seul (sans manifeste code/plugin) -> autorisé
+            git_only = root / "git-atelier"
+            _make_git_repo(git_only, branch="main")
+            self.assertEqual(init_workspace.main(["--workspace", str(git_only)]), 0)
+            agents_txt = (git_only / "AGENTS.md").read_text(encoding="utf-8")
+            self.assertIn("KISS, YAGNI, DRY, SOLID, CUPID", agents_txt)
+
+    def test_validate_d4_rules_budget_and_root_agents_hygiene(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            fake_repo = Path(tmp) / "repo"
+            plug = fake_repo / "plugin"
+            shutil.copytree(
+                PLUGIN_ROOT, plug, ignore=shutil.ignore_patterns("__pycache__", "*.pyc")
+            )
+            # Copie valide avec AGENTS.md racine sous 2500 o et rules/AGENTS.md <= 1000 o
+            (fake_repo / "AGENTS.md").write_text(
+                "# Root Agents\n- OK\n", encoding="utf-8", newline="\n"
+            )
+            ok_rep = validate.Report()
+            validate.validate_plugin(plug, ok_rep)
+            self.assertTrue(ok_rep.ok(strict=True), f"{ok_rep.errors} | {ok_rep.warnings}")
+            self.assertTrue(any("<= 600 octets" in msg for msg in ok_rep.infos))
+
+            # rules/AGENTS.md > 1000 o -> erreur bloquante
+            (plug / "rules" / "AGENTS.md").write_text(
+                "x" * 1001 + "\n", encoding="utf-8", newline="\n"
+            )
+            over_rep = validate.Report()
+            validate.validate_plugin(plug, over_rep)
+            self.assertFalse(over_rep.ok(strict=True))
+            self.assertTrue(any("1000 octets" in e for e in over_rep.errors), over_rep.errors)
+
+            # Restaure rules/AGENTS.md, casse templates/AGENTS.md (CRLF) et AGENTS.md racine (> 2500 o)
+            shutil.copy2(PLUGIN_ROOT / "rules" / "AGENTS.md", plug / "rules" / "AGENTS.md")
+            (plug / "templates" / "AGENTS.md").write_bytes(b"# Tpl\r\n")
+            (fake_repo / "AGENTS.md").write_bytes(b"# Root\n" + b"a" * 2500)
+            hygiene_rep = validate.Report()
+            validate.validate_plugin(plug, hygiene_rep)
+            self.assertFalse(hygiene_rep.ok(strict=True))
+            joined = " | ".join(hygiene_rep.errors)
+            self.assertIn("templates/AGENTS.md", joined)
+            self.assertIn("AGENTS.md (racine)", joined)
+
 
 if __name__ == "__main__":
     unittest.main()

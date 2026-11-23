@@ -308,17 +308,40 @@ def _validate_skills(root: Path, report: Report) -> None:
         report.error("skills/gravity-architect/SKILL.md : 'description' manquante ou vide.")
 
 
+def _check_agents_markdown_hygiene(
+    path: Path, label: str, max_bytes: int, report: Report
+) -> bytes:
+    """Vérifie UTF-8 sans BOM, LF et le budget octets maximal d'un fichier AGENTS.md."""
+    raw_bytes = path.read_bytes()
+    if raw_bytes.startswith(b"\xef\xbb\xbf"):
+        report.error(f"{label} ne doit pas contenir de BOM UTF-8.")
+    if b"\r\n" in raw_bytes:
+        report.error(f"{label} doit utiliser des fins de ligne LF (\\n), CRLF détecté.")
+    if len(raw_bytes) > max_bytes:
+        report.error(f"{label} dépasse {max_bytes} octets ({len(raw_bytes)}).")
+    return raw_bytes
+
+
 def _validate_rules_and_templates(root: Path, report: Report) -> None:
     rules_file = root / "rules" / "AGENTS.md"
     if not rules_file.is_file():
         report.error("rules/AGENTS.md introuvable.")
     else:
-        raw_bytes = rules_file.read_bytes()
-        if len(raw_bytes) >= 2048:
-            report.error(f"rules/AGENTS.md dépasse 2048 octets ({len(raw_bytes)}).")
+        raw_bytes = _check_agents_markdown_hygiene(
+            rules_file, "rules/AGENTS.md", 1000, report
+        )
+        if 600 < len(raw_bytes) <= 1000:
+            report.info(
+                f"rules/AGENTS.md pèse {len(raw_bytes)} octets (cible recommandée : <= 600 octets)."
+            )
         rules_txt = raw_bytes.decode("utf-8", errors="replace")
         if rules_txt.lstrip().startswith("---"):
             report.error("rules/AGENTS.md ne doit pas contenir de frontmatter YAML.")
+
+    if root.name == "plugin" and (root.parent / "AGENTS.md").is_file():
+        _check_agents_markdown_hygiene(
+            root.parent / "AGENTS.md", "AGENTS.md (racine)", 2500, report
+        )
 
     templates_dir = root / "templates"
     if not templates_dir.is_dir():
@@ -330,8 +353,8 @@ def _validate_rules_and_templates(root: Path, report: Report) -> None:
             report.error(f"Template requis manquant : templates/{tpl_name}")
 
     tpl_agents = templates_dir / "AGENTS.md"
-    if tpl_agents.is_file() and tpl_agents.stat().st_size > 2500:
-        report.error(f"templates/AGENTS.md dépasse 2500 octets ({tpl_agents.stat().st_size}).")
+    if tpl_agents.is_file():
+        _check_agents_markdown_hygiene(tpl_agents, "templates/AGENTS.md", 2500, report)
 
     tpl_cfg = templates_dir / "projects.json"
     if tpl_cfg.is_file():

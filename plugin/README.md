@@ -16,6 +16,12 @@ Plugin Antigravity générique (**100 % bibliothèque standard Python 3**) pour 
 - `--project <chemin|id=chemin>` : accepte un chemin nu avec auto-détection complète ou `id=chemin` ; `--preset` devient optionnel (surcharge explicite sinon auto-détecté par projet).
 - `--add <chemin|id=chemin>` *(répétable)* : ajoute des projets à un atelier existant (`projects.json` requis, refus *fail-closed* des doublons d'`id` ou de chemin résolu).
 - `--watch antigravity` / `--watch-url id=url` / `--public-mode` / `--run-sync [--offline]` : presets de veille (avec `tracking/antigravity/IMPACT.md` généré depuis `templates/impact-template.md`), mode confidentiel et synchronisation opt-in.
+- **Garde-fou dépôt produit (`--force` / `--json`) :** `init_workspace.py` refuse d'initialiser un nouvel atelier dans un dépôt contenant `.git` et un manifeste code/plugin sans `projects.json` existant, sauf avec `--force`.
+
+### Options CLI de synchronisation (`scripts/sync_tracking.py`)
+- **Repli centralisé :** après `--config` > `--workspace` > `$GRAVITY_ARCHITECT_WORKSPACE` > `cwd` > sous-dossier atelier unique, `resolve_workspace_root()` se replie sur `default_architect_home()` si `projects.json` y existe.
+- `--max-stdout-bytes <N>` *(défaut `8192`, `0` = illimité)* : évite la troncature `stdout` lors de `--print-delta` en imprimant un résumé compact (statut exact, `Cibles éditoriales LLM`, statistiques, chemin `tracking/snapshots/delta.md`) sous le seuil.
+- `--max-changelog-lines <N>` *(défaut `45`)* : borne le nombre de lignes extraites par section `CHANGELOG.md`.
 
 ## Suivi multi-projets, contrat module & mode public
 

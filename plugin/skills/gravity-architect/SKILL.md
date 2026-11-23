@@ -48,7 +48,7 @@ description: >-
    ```powershell
    python "<PLUGIN_DIR>/scripts/sync_tracking.py" --print-delta
    ```
-   *(Options : `--workspace <dir>`, `--offline`, `--check`, `--ack-editorial`.)*
+   *(Options : `--workspace <dir>`, `--offline`, `--check`, `--ack-editorial`, `--max-stdout-bytes <N>`, `--max-changelog-lines <N>`.)*
 2. Lire la sortie du micro-delta :
    - **Si `Statut éditorial : NO_EDITORIAL_CHANGES` (et sans `--full`) :**
      - **Ne lire aucun autre fichier.**

@@ -33,6 +33,16 @@ TEMPLATES_DIR = PLUGIN_ROOT / "templates"
 
 PROJECT_ID_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,48}$")
 TOML_DESC_RE = re.compile(r'^\s*description\s*=\s*["\']([^"\']+)["\']', re.MULTILINE)
+PRODUCT_MANIFEST_FILES = (
+    "plugin/plugin.json",
+    "plugin.json",
+    "pyproject.toml",
+    "package.json",
+    "Cargo.toml",
+    "go.mod",
+    "pom.xml",
+    "setup.py",
+)
 
 ANTIGRAVITY_CHANGELOG_URL = "https://antigravity.google/docs/changelog.md"
 ANTIGRAVITY_IMPACT_BUDGET = 6000
@@ -62,26 +72,22 @@ def _write_utf8(path: Path, text: str) -> None:
         fh.write(text.replace("\r\n", "\n"))
 
 
-def _deploy_file(
-    dst: Path,
-    content: str,
-    *,
-    force: bool,
-    created: list[str],
-    updated: list[str],
-    skipped: list[str],
-    workspace_root: Path,
-) -> None:
-    rel = dst.relative_to(workspace_root).as_posix()
+def _deploy_file(dst: Path, content: str, *, force: bool) -> str:
+    """Écrit ou préserve un fichier cible et retourne son statut (`created`, `updated` ou `skipped`)."""
     if dst.exists():
         if not force:
-            skipped.append(rel)
-            return
+            return "skipped"
         _write_utf8(dst, content)
-        updated.append(rel)
-        return
+        return "updated"
     _write_utf8(dst, content)
-    created.append(rel)
+    return "created"
+
+
+def _detect_product_repo_manifests(ws_root: Path) -> list[str]:
+    """Retourne les manifestes code/plugin détectés si `ws_root` est un dépôt produit sans atelier."""
+    if (ws_root / "projects.json").is_file() or not _is_git_repo(ws_root):
+        return []
+    return [rel for rel in PRODUCT_MANIFEST_FILES if (ws_root / rel).is_file()]
 
 
 def _normalize_project_id(raw_name: str) -> str:
@@ -503,6 +509,16 @@ def init_workspace(
     """Initialise un atelier de conception isolé dans `workspace`."""
     ws_root = workspace.expanduser().resolve()
 
+    if not force:
+        detected_manifests = _detect_product_repo_manifests(ws_root)
+        if detected_manifests:
+            raise ValueError(
+                f"Dépôt produit détecté dans {ws_root} "
+                f"(.git + {', '.join(detected_manifests)}) sans projects.json : "
+                "initialisation refusée. Utilisez un dossier dédié via --workspace <chemin> "
+                "(ou --force pour outrepasser)."
+            )
+
     selected_watches = list(dict.fromkeys(w.strip().lower() for w in (watches or []) if w.strip()))
     cfg_watches: list[dict] = []
     seen_watch_ids: set[str] = set()
@@ -620,16 +636,10 @@ def init_workspace(
             )
         )
 
+    buckets = {"created": created, "updated": updated, "skipped": skipped}
     for dst, content in targets:
-        _deploy_file(
-            dst,
-            content,
-            force=force,
-            created=created,
-            updated=updated,
-            skipped=skipped,
-            workspace_root=ws_root,
-        )
+        status = _deploy_file(dst, content, force=force)
+        buckets[status].append(dst.relative_to(ws_root).as_posix())
 
     return {
         "workspace": str(ws_root),
@@ -747,7 +757,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--json",
         action="store_true",
-        help="Sortie JSON structurée pour --discover",
+        help="Sortie JSON structurée (--discover, initialisation et erreurs)",
     )
     parser.add_argument(
         "--add",
@@ -837,18 +847,21 @@ def main(argv: list[str] | None = None) -> int:
             add_res = add_projects_to_workspace(
                 args.workspace, list(args.add), preset=args.preset
             )
-            print(
-                f"[OK] Projets ajoutés à {add_res['workspace']} : "
-                f"{', '.join(add_res['added'])} "
-                f"(fiches créées: {len(add_res['cards_created'])}, "
-                f"préservées: {len(add_res['cards_skipped'])})."
-            )
             if args.run_sync:
                 ws_root = Path(add_res["workspace"])
                 run_sync(
                     config_path=ws_root / "projects.json",
                     offline=args.offline,
                     concept_root=ws_root,
+                )
+            if args.json:
+                print(json.dumps({"ok": True, **add_res}, indent=2, ensure_ascii=False))
+            else:
+                print(
+                    f"[OK] Projets ajoutés à {add_res['workspace']} : "
+                    f"{', '.join(add_res['added'])} "
+                    f"(fiches créées: {len(add_res['cards_created'])}, "
+                    f"préservées: {len(add_res['cards_skipped'])})."
                 )
             return 0
 
@@ -873,15 +886,30 @@ def main(argv: list[str] | None = None) -> int:
                 concept_root=ws_resolved,
             )
     except (OSError, ValueError) as exc:
-        print(f"[erreur] Initialisation impossible : {exc}", file=sys.stderr)
+        if args.json:
+            print(
+                json.dumps(
+                    {
+                        "ok": False,
+                        "error": str(exc),
+                        "workspace": str(args.workspace.expanduser().resolve()),
+                    },
+                    ensure_ascii=False,
+                )
+            )
+        else:
+            print(f"[erreur] Initialisation impossible : {exc}", file=sys.stderr)
         return 1
 
-    print(f"[OK] Atelier initialisé : {result['workspace']}")
-    print(
-        f"     Créés: {len(result['created'])}, "
-        f"mis à jour: {len(result['updated'])}, "
-        f"préservés: {len(result['skipped'])}."
-    )
+    if args.json:
+        print(json.dumps({"ok": True, **result}, indent=2, ensure_ascii=False))
+    else:
+        print(f"[OK] Atelier initialisé : {result['workspace']}")
+        print(
+            f"     Créés: {len(result['created'])}, "
+            f"mis à jour: {len(result['updated'])}, "
+            f"préservés: {len(result['skipped'])}."
+        )
     return 0
 
 

@@ -1264,6 +1264,162 @@ class TestSyncTracking(unittest.TestCase):
             sync_tracking.apply_auto_doc_updates(ws, snap_raw, delta_raw)
             self.assertIn("**`custom-build` local** *(écart)*", impact_path.read_text(encoding="utf-8"))
 
+    def test_resolve_workspace_root_architect_home_fallback_and_isolation(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            empty_cwd = root / "empty"
+            empty_cwd.mkdir()
+            fake_home = root / "home"
+            arch_default = fake_home / ".gemini" / "gravity" / "architect"
+
+            # Sans projects.json nulle part (isolé du $HOME réel) -> FileNotFoundError
+            with self.assertRaises(FileNotFoundError):
+                sync_tracking.resolve_workspace_root(
+                    cwd=empty_cwd, env={}, home_dir=fake_home
+                )
+
+            # Repli sur ~/.gemini/gravity/architect quand projects.json y existe
+            arch_default.mkdir(parents=True)
+            (arch_default / "projects.json").write_text("{}\n", encoding="utf-8")
+            r_root, r_cfg = sync_tracking.resolve_workspace_root(
+                cwd=empty_cwd, env={}, home_dir=fake_home
+            )
+            self.assertEqual(r_root, arch_default.resolve())
+            self.assertEqual(r_cfg, (arch_default / "projects.json").resolve())
+
+            # Repli via GRAVITY_ARCHITECT_HOME prioritaire sur home_dir
+            custom_arch = root / "custom_arch"
+            custom_arch.mkdir()
+            (custom_arch / "projects.json").write_text("{}\n", encoding="utf-8")
+            c_root, _ = sync_tracking.resolve_workspace_root(
+                cwd=empty_cwd,
+                env={"GRAVITY_ARCHITECT_HOME": str(custom_arch)},
+                home_dir=fake_home,
+            )
+            self.assertEqual(c_root, custom_arch.resolve())
+
+            # Un atelier direct dans cwd reste prioritaire sur le repli architect_home
+            (empty_cwd / "projects.json").write_text("{}\n", encoding="utf-8")
+            d_root, _ = sync_tracking.resolve_workspace_root(
+                cwd=empty_cwd,
+                env={"GRAVITY_ARCHITECT_HOME": str(custom_arch)},
+                home_dir=fake_home,
+            )
+            self.assertEqual(d_root, empty_cwd.resolve())
+
+    def test_cli_max_stdout_bytes_and_max_changelog_lines(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            repo = root / "long-repo"
+            _init_demo_repo(repo, compliant=True)
+            long_lines = "\n".join(f"- Change item {i:02d} with extra detail" for i in range(1, 25))
+            (repo / "CHANGELOG.md").write_text(
+                f"# Changelog\n\n## [0.2.0] - 2026-11-23\n{long_lines}\n",
+                encoding="utf-8",
+            )
+            (repo / "plugin" / "plugin.json").write_text(
+                json.dumps(
+                    {
+                        "name": "demo",
+                        "displayName": "Demo",
+                        "version": "0.2.0",
+                        "description": "Plugin de démonstration conforme au standard.",
+                        "logo": "assets/logo.svg",
+                        "suggestedPrompts": ["Cmd 1", "Cmd 2", "Cmd 3"],
+                        "author": {"name": "Tests"},
+                        "homepage": "https://example.com/demo",
+                        "repository": "https://example.com/demo.git",
+                    }
+                ),
+                encoding="utf-8",
+            )
+            _git(repo, "add", "-A")
+            _git(repo, "commit", "-m", "feat: long changelog")
+
+            ws = root / "atelier"
+            ws.mkdir()
+            (ws / "tracking" / "projects").mkdir(parents=True)
+            (ws / "ECOSYSTEM.md").write_text(
+                "# Eco\n"
+                "<!-- AUTO:START:ecosystem-meta -->\n<!-- AUTO:END:ecosystem-meta -->\n"
+                "<!-- AUTO:START:ecosystem-projects -->\n<!-- AUTO:END:ecosystem-projects -->\n"
+                "<!-- AUTO:START:ecosystem-watches -->\n<!-- AUTO:END:ecosystem-watches -->\n"
+                "<!-- AUTO:START:ecosystem-artifacts -->\n<!-- AUTO:END:ecosystem-artifacts -->\n"
+                "<!-- AUTO:START:ecosystem-hygiene -->\n<!-- AUTO:END:ecosystem-hygiene -->\n",
+                encoding="utf-8",
+            )
+            (ws / "projects.json").write_text(
+                json.dumps(
+                    {
+                        "schema_version": 5,
+                        "default_preset": "generic",
+                        "projects": [
+                            {
+                                "id": "long-repo",
+                                "name": "Long Repo",
+                                "path": "../long-repo",
+                                "preset": "generic",
+                                "main_branch": "main",
+                                "default_dev_branch": "main",
+                            }
+                        ],
+                        "watches": [],
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            # 1. --max-changelog-lines 4 + --max-stdout-bytes 380 -> résumé compact sous seuil
+            out_buf = io.StringIO()
+            with contextlib.redirect_stdout(out_buf):
+                rc = sync_tracking.main(
+                    [
+                        "--workspace",
+                        str(ws),
+                        "--offline",
+                        "--print-delta",
+                        "--max-changelog-lines",
+                        "4",
+                        "--max-stdout-bytes",
+                        "380",
+                    ]
+                )
+            self.assertEqual(rc, 0)
+            stdout_txt = out_buf.getvalue()
+            self.assertLessEqual(len(stdout_txt.encode("utf-8")), 380)
+            self.assertIn("EDITORIAL_UPDATE_REQUIRED", stdout_txt)
+            self.assertIn("Cibles éditoriales LLM", stdout_txt)
+            self.assertIn("tracking/snapshots/delta.md", stdout_txt)
+
+            disk_delta = (ws / "tracking" / "snapshots" / "delta.md").read_text(encoding="utf-8")
+            self.assertIn("... (extrait tronqué)", disk_delta)
+            self.assertIn("Change item 03", disk_delta)
+            self.assertNotIn("Change item 20", disk_delta)
+
+            # 2. --max-stdout-bytes 0 (illimité) imprime le delta complet
+            out_full = io.StringIO()
+            with contextlib.redirect_stdout(out_full):
+                rc_full = sync_tracking.main(
+                    [
+                        "--workspace",
+                        str(ws),
+                        "--offline",
+                        "--print-delta",
+                        "--max-stdout-bytes",
+                        "0",
+                    ]
+                )
+            self.assertEqual(rc_full, 0)
+            self.assertIn("Change item 20", out_full.getvalue())
+
+            # 3. Seuil minuscule respecte strictement la borne d'octets
+            tiny_out = sync_tracking.format_delta_for_stdout(
+                {"needs_editorial_update": False, "editorial_targets": ["a.md"]},
+                "x" * 500,
+                max_stdout_bytes=90,
+            )
+            self.assertLessEqual(len(tiny_out.encode("utf-8")), 90)
+
 
 if __name__ == "__main__":
     unittest.main()

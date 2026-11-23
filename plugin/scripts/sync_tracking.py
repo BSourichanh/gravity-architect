@@ -377,8 +377,9 @@ def resolve_workspace_root(
     workspace_arg: Path | None = None,
     cwd: Path | None = None,
     env: dict | None = None,
+    home_dir: Path | None = None,
 ) -> tuple[Path, Path]:
-    """Résout `(concept_root, config_path)` par paramètres, env ou auto-détection d'atelier."""
+    """Résout `(concept_root, config_path)` par paramètres, env, auto-détection ou accueil centralisé."""
     if config_arg is not None:
         cfg_path = config_arg.expanduser().resolve()
         return cfg_path.parent, cfg_path
@@ -415,9 +416,15 @@ def resolve_workspace_root(
         raise ValueError(
             f"Plusieurs ateliers détectés dans {base_cwd} ({names}) ; précisez --workspace."
         )
+
+    arch_home = default_architect_home(env=env_map, home_dir=home_dir)
+    arch_cfg = arch_home / "projects.json"
+    if arch_cfg.is_file():
+        return arch_home, arch_cfg
+
     raise FileNotFoundError(
-        f"Aucun fichier projects.json trouvé dans {base_cwd} ni dans un sous-dossier atelier. "
-        "Utilisez --workspace <dir> ou init_workspace.py."
+        f"Aucun fichier projects.json trouvé dans {base_cwd}, un sous-dossier atelier, "
+        f"ni {arch_home}. Utilisez --workspace <dir> ou init_workspace.py."
     )
 
 
@@ -1057,6 +1064,7 @@ def collect_project_snapshot(
     dry_run: bool = False,
     concept_root: Path | None = None,
     default_preset: str = "generic",
+    max_changelog_lines: int = 45,
 ) -> dict:
     """Collecte en lecture seule les métadonnées stables, conformité et WIP d'un dépôt suivi."""
     project_id = str(project_cfg["id"])
@@ -1212,7 +1220,9 @@ def collect_project_snapshot(
             snapshot["stable"]["changelog_sha256"] = hashlib.sha256(
                 changelog_text.encode("utf-8")
             ).hexdigest()
-            snapshot["stable"].update(extract_latest_changelog_section(changelog_text))
+            snapshot["stable"].update(
+                extract_latest_changelog_section(changelog_text, max_lines=max_changelog_lines)
+            )
             if not dry_run:
                 archive_file = changelogs_dir / f"{project_id}-CHANGELOG.md"
                 if (
@@ -2753,6 +2763,112 @@ def render_delta_markdown(
     return rendered
 
 
+def format_delta_for_stdout(
+    delta: dict,
+    delta_md: str,
+    *,
+    max_stdout_bytes: int = 8192,
+    dry_run: bool = False,
+    delta_rel_path: str = "tracking/snapshots/delta.md",
+    replacements: list[tuple[str, str]] | None = None,
+) -> str:
+    """Retourne `delta_md` si <= `max_stdout_bytes` (ou <= 0), sinon un résumé compact sous le seuil."""
+    if max_stdout_bytes <= 0:
+        return delta_md
+    raw_bytes = delta_md.encode("utf-8")
+    if len(raw_bytes) <= max_stdout_bytes:
+        return delta_md
+
+    status = (
+        "EDITORIAL_UPDATE_REQUIRED"
+        if delta.get("needs_editorial_update")
+        else "NO_EDITORIAL_CHANGES"
+    )
+    targets = delta.get("editorial_targets") or []
+    alerts = delta.get("hygiene_alerts") or []
+    auto_files = delta.get("auto_updated_files") or []
+    changed_ids = [
+        pd["id"]
+        for pd in (delta.get("projects") or {}).values()
+        if pd.get("new_tags")
+        or pd.get("manifest_version_changed")
+        or pd.get("changelog_changed")
+        or pd.get("agents_md_changed")
+        or pd.get("wip_changed")
+        or pd.get("missing_project_card")
+    ]
+    watch_updates = sum(
+        len(sinfo.get("new_releases") or [])
+        for wdelta in (delta.get("watches") or {}).values()
+        for sinfo in (wdelta.get("surfaces") or {}).values()
+    )
+    mode_label = " [DRY-RUN]" if dry_run else ""
+    targets_str = ", ".join(f"`{t}`" for t in targets) if targets else "aucune"
+    auto_str = ", ".join(f"`{f}`" for f in auto_files) if auto_files else "aucun"
+    changed_str = ", ".join(f"`{pid}`" for pid in changed_ids) if changed_ids else "aucun"
+
+    def _sanitize(text: str) -> str:
+        if delta.get("public_mode"):
+            pairs = replacements if replacements is not None else _collect_path_replacements()
+            return _sanitize_markdown_paths(text, replacements=pairs)
+        return text
+
+    candidates = [
+        "\n".join(
+            [
+                f"# Gravity Architect — Delta compact{mode_label}",
+                "",
+                f"- **Date :** `{delta.get('synced_at', '')}`",
+                f"- **Statut éditorial :** `{status}`",
+                f"- **Veilles :** `{delta.get('fetch_status')}` ({watch_updates} release(s))",
+                f"- **Fichiers auto-mis à jour (0 token) :** {auto_str}",
+                f"- **Cibles éditoriales LLM :** {targets_str}",
+                f"- **Statistiques :** {len(changed_ids)} projet(s) modifié(s) ({changed_str}), {len(alerts)} alerte(s) hygiène, {len(raw_bytes)} o complets.",
+                f"- **Delta complet :** `{delta_rel_path}` (tronqué pour stdout <= {max_stdout_bytes} o)",
+                "",
+            ]
+        ),
+        "\n".join(
+            [
+                f"# Gravity Architect — Delta compact{mode_label}",
+                f"- **Statut éditorial :** `{status}`",
+                f"- **Cibles éditoriales LLM :** {targets_str}",
+                f"- **Stats :** projets={len(changed_ids)}, alertes={len(alerts)}, veilles={watch_updates}, taille={len(raw_bytes)} o",
+                f"- **Delta complet :** `{delta_rel_path}`",
+                "",
+            ]
+        ),
+        "\n".join(
+            [
+                f"# Delta compact{mode_label}",
+                f"- **Statut éditorial :** `{status}`",
+                (
+                    f"- **Cibles éditoriales LLM :** {len(targets)} ({targets[0]}...)"
+                    if targets
+                    else "- **Cibles éditoriales LLM :** aucune"
+                ),
+                f"- **Stats :** p={len(changed_ids)}, a={len(alerts)}, v={watch_updates}",
+                f"- **Delta complet :** `{delta_rel_path}`",
+                "",
+            ]
+        ),
+    ]
+
+    for cand in candidates:
+        sanitized = _sanitize(cand)
+        if len(sanitized.encode("utf-8")) <= max_stdout_bytes:
+            return sanitized
+
+    minimal = _sanitize(
+        f"{status} | Cibles éditoriales LLM: {len(targets)} | {delta_rel_path}\n"
+    )
+    encoded = minimal.encode("utf-8")
+    if len(encoded) <= max_stdout_bytes:
+        return minimal
+    cut = encoded[: max(0, max_stdout_bytes - 1)].decode("utf-8", errors="ignore")
+    return cut + ("\n" if max_stdout_bytes >= 1 else "")
+
+
 def replace_auto_block(text: str, block_id: str, new_body: str) -> tuple[str, bool]:
     """Remplace strictement le corps entre `<!-- AUTO:START:<id> -->` et `<!-- AUTO:END:<id> -->`."""
     start_marker = f"<!-- AUTO:START:{block_id} -->"
@@ -3152,8 +3268,11 @@ def run_sync(
     apply_docs: bool = True,
     ack_editorial: bool = False,
     public_mode: bool | None = None,
+    max_changelog_lines: int = 45,
 ) -> tuple[dict, dict]:
     """Exécute la synchronisation complète et retourne `(snapshot, delta)`."""
+    if max_changelog_lines < 1:
+        raise ValueError("--max-changelog-lines doit être >= 1.")
     cfg = load_config(config_path)
     effective_public = resolve_public_mode(cfg) if public_mode is None else public_mode
     base_dir = config_path.resolve().parent
@@ -3229,6 +3348,7 @@ def run_sync(
             dry_run=dry_run,
             concept_root=resolved_concept_root,
             default_preset=default_preset,
+            max_changelog_lines=max_changelog_lines,
         )
         for proj in projects_cfg
     ]
@@ -3435,6 +3555,18 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Affiche le delta Markdown compact sur stdout",
     )
+    parser.add_argument(
+        "--max-stdout-bytes",
+        type=int,
+        default=8192,
+        help="Seuil maximal en octets sur stdout pour --print-delta (défaut : 8192, 0 = illimité)",
+    )
+    parser.add_argument(
+        "--max-changelog-lines",
+        type=int,
+        default=45,
+        help="Nombre maximal de lignes par extrait CHANGELOG.md (défaut : 45)",
+    )
     return parser
 
 
@@ -3444,6 +3576,8 @@ def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
     try:
+        if args.max_stdout_bytes < 0:
+            raise ValueError("--max-stdout-bytes doit être >= 0.")
         detected_root, config_path = resolve_workspace_root(
             config_arg=args.config,
             workspace_arg=args.workspace,
@@ -3460,6 +3594,7 @@ def main(argv: list[str] | None = None) -> int:
             dry_run=args.dry_run,
             apply_docs=not args.no_apply_docs,
             ack_editorial=args.ack_editorial,
+            max_changelog_lines=args.max_changelog_lines,
         )
     except (OSError, json.JSONDecodeError, ValueError, KeyError) as exc:
         print(f"[erreur] Synchronisation impossible : {exc}", file=sys.stderr)
@@ -3471,8 +3606,24 @@ def main(argv: list[str] | None = None) -> int:
             if snapshot.get("public_mode")
             else None
         )
+        delta_md = render_delta_markdown(delta, dry_run=args.dry_run, replacements=delta_masks)
+        try:
+            delta_rel = (
+                (out_dir.resolve() / "snapshots" / "delta.md")
+                .relative_to(concept_root.resolve())
+                .as_posix()
+            )
+        except ValueError:
+            delta_rel = "tracking/snapshots/delta.md"
         sys.stdout.write(
-            render_delta_markdown(delta, dry_run=args.dry_run, replacements=delta_masks)
+            format_delta_for_stdout(
+                delta,
+                delta_md,
+                max_stdout_bytes=args.max_stdout_bytes,
+                dry_run=args.dry_run,
+                delta_rel_path=delta_rel,
+                replacements=delta_masks,
+            )
         )
     else:
         prefix = "[dry-run] " if args.dry_run else ""
