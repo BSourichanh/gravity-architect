@@ -486,14 +486,24 @@ class TestInitAndInstall(unittest.TestCase):
             shutil.copytree(
                 PLUGIN_ROOT, plug, ignore=shutil.ignore_patterns("__pycache__", "*.pyc")
             )
-            # Copie valide avec AGENTS.md racine sous 2500 o et rules/AGENTS.md <= 1000 o
+            # Copie valide avec AGENTS.md racine <= 2500 o, rules/AGENTS.md <= 600 o et SKILL.md <= 6000 o
             (fake_repo / "AGENTS.md").write_text(
                 "# Root Agents\n- OK\n", encoding="utf-8", newline="\n"
             )
             ok_rep = validate.Report()
             validate.validate_plugin(plug, ok_rep)
             self.assertTrue(ok_rep.ok(strict=True), f"{ok_rep.errors} | {ok_rep.warnings}")
-            self.assertTrue(any("<= 600 octets" in msg for msg in ok_rep.infos))
+            self.assertEqual(ok_rep.warnings, [])
+
+            # rules/AGENTS.md entre 601 et 1000 o -> OK hors --strict, échoue en --strict (warn "600")
+            (plug / "rules" / "AGENTS.md").write_text(
+                "x" * 650 + "\n", encoding="utf-8", newline="\n"
+            )
+            warn_rep = validate.Report()
+            validate.validate_plugin(plug, warn_rep)
+            self.assertTrue(warn_rep.ok(strict=False), warn_rep.errors)
+            self.assertFalse(warn_rep.ok(strict=True))
+            self.assertTrue(any("600" in w for w in warn_rep.warnings), warn_rep.warnings)
 
             # rules/AGENTS.md > 1000 o -> erreur bloquante
             (plug / "rules" / "AGENTS.md").write_text(
@@ -501,17 +511,38 @@ class TestInitAndInstall(unittest.TestCase):
             )
             over_rep = validate.Report()
             validate.validate_plugin(plug, over_rep)
+            self.assertFalse(over_rep.ok(strict=False))
             self.assertFalse(over_rep.ok(strict=True))
             self.assertTrue(any("1000 octets" in e for e in over_rep.errors), over_rep.errors)
 
-            # Restaure rules/AGENTS.md, casse templates/AGENTS.md (CRLF) et AGENTS.md racine (> 2500 o)
+            # Restaure rules/AGENTS.md ; SKILL.md > 6000 o -> erreur bloquante
             shutil.copy2(PLUGIN_ROOT / "rules" / "AGENTS.md", plug / "rules" / "AGENTS.md")
+            skill_path = plug / "skills" / "gravity-architect" / "SKILL.md"
+            skill_path.write_text(
+                "---\nname: gravity-architect\ndescription: ok\n---\n" + ("s" * 6000) + "\n",
+                encoding="utf-8",
+                newline="\n",
+            )
+            skill_over_rep = validate.Report()
+            validate.validate_plugin(plug, skill_over_rep)
+            self.assertFalse(skill_over_rep.ok(strict=True))
+            self.assertTrue(
+                any("SKILL.md" in e and "6000 octets" in e for e in skill_over_rep.errors),
+                skill_over_rep.errors,
+            )
+
+            # Restaure SKILL.md, casse SKILL.md (BOM+CRLF), templates/AGENTS.md (CRLF) et AGENTS.md racine (> 2500 o)
+            skill_path.write_bytes(
+                b"\xef\xbb\xbf---\r\nname: gravity-architect\r\ndescription: ok\r\n---\r\n"
+            )
             (plug / "templates" / "AGENTS.md").write_bytes(b"# Tpl\r\n")
             (fake_repo / "AGENTS.md").write_bytes(b"# Root\n" + b"a" * 2500)
             hygiene_rep = validate.Report()
             validate.validate_plugin(plug, hygiene_rep)
             self.assertFalse(hygiene_rep.ok(strict=True))
             joined = " | ".join(hygiene_rep.errors)
+            self.assertIn("SKILL.md", joined)
+            self.assertIn("BOM", joined)
             self.assertIn("templates/AGENTS.md", joined)
             self.assertIn("AGENTS.md (racine)", joined)
 

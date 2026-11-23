@@ -12,12 +12,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **CLI Ergonomics (`plugin/scripts/sync_tracking.py`):**
   - Added `default_architect_home()` fallback in `resolve_workspace_root(..., home_dir=...)` after `--config` > `--workspace` > `$GRAVITY_ARCHITECT_WORKSPACE` > `cwd` > unique subfolder detection.
   - Added `--max-stdout-bytes` (default `8192`, `0` = unlimited) with `format_delta_for_stdout()` emitting a bounded summary (exact status, `Cibles éditoriales LLM`, synthetic stats, `tracking/snapshots/delta.md` path) when `--print-delta` exceeds the threshold, and `--max-changelog-lines` (default `45`) forwarded to `extract_latest_changelog_section()`.
-- **Validator D4 & Root `AGENTS.md` Hygiene (`plugin/scripts/validate.py`):** lowered `plugin/rules/AGENTS.md` blocking ceiling to `> 1 000 B` (with an `[INFO]` note between `601` and `1 000 B` for the `<= 600 B` target), enforced UTF-8 no-BOM and LF on `rules/AGENTS.md`, `templates/AGENTS.md`, and root `AGENTS.md` (`<= 2 500 B` when `root.name == "plugin"`).
-- **Unit Tests:** added `unittest` coverage in `tests/test_init_and_install.py` and `tests/test_sync_tracking.py` for the product-repo guard, `_deploy_file()` literal return status, template principles, `resolve_workspace_root()` fallback isolation, `--max-stdout-bytes` / `--max-changelog-lines`, and validator D4 rules.
+- **Validator D4 & Markdown Hygiene (`plugin/scripts/validate.py`):** lowered `plugin/rules/AGENTS.md` blocking ceiling to `> 1 000 B` with a `[WARN]` between `601` and `1 000 B` (blocking under `--strict`), and enforced UTF-8 no-BOM, LF, and budget limits on `rules/AGENTS.md`, `skills/gravity-architect/SKILL.md` (`<= 6 000 B`), `templates/AGENTS.md` (`<= 2 500 B`), and root `AGENTS.md` (`<= 2 500 B` when `root.name == "plugin"`).
+- **Unit Tests:** added `unittest` coverage in `tests/test_init_and_install.py` and `tests/test_sync_tracking.py` for the product-repo guard, `_deploy_file()` literal return status, template principles, `resolve_workspace_root()` fallback isolation, `--max-stdout-bytes` / `--max-changelog-lines`, and validator D4 rules (including `601..1 000 B` `--strict` warning and `SKILL.md > 6 000 B` / BOM / CRLF rejection).
 
 ### Changed
 - **Simplified `_deploy_file()` (`plugin/scripts/init_workspace.py`):** returns `"created" | "updated" | "skipped"` instead of mutating 3 list arguments.
-- **Template & Rules Compaction:** added `KISS, YAGNI, DRY, SOLID, CUPID` to invariant 1 of `plugin/templates/AGENTS.md` (`<= 2 500 B`), compacted `plugin/rules/AGENTS.md` (`<= 950 B`, LF, no BOM, no frontmatter), and compacted root `AGENTS.md` (`<= 1 650 B`, LF, 3 canonical sections preserved).
+- **Template, Rules & Skill Compaction:** added `KISS, YAGNI, DRY, SOLID, CUPID` to invariant 1 of `plugin/templates/AGENTS.md` (`<= 2 500 B`), compacted `plugin/rules/AGENTS.md` (`<= 520 B`, LF, no BOM, no frontmatter), compacted `plugin/skills/gravity-architect/SKILL.md` (`<= 5 800 B`, LF, no BOM), and compacted root `AGENTS.md` (`<= 1 650 B`, LF, 3 canonical sections preserved).
 
 ## [0.4.0] - 2026-11-22
 

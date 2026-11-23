@@ -295,7 +295,10 @@ def _validate_skills(root: Path, report: Report) -> None:
         report.error("skills/gravity-architect/SKILL.md introuvable.")
         return
 
-    txt = skill_md.read_text(encoding="utf-8", errors="replace")
+    raw_bytes = _check_markdown_hygiene(
+        skill_md, "skills/gravity-architect/SKILL.md", 6000, report
+    )
+    txt = raw_bytes.decode("utf-8", errors="replace")
     fm_match = re.match(r"^\s*---\r?\n(.*?)\r?\n---\r?\n", txt, re.DOTALL)
     if not fm_match:
         report.error("skills/gravity-architect/SKILL.md : frontmatter YAML manquant.")
@@ -308,10 +311,10 @@ def _validate_skills(root: Path, report: Report) -> None:
         report.error("skills/gravity-architect/SKILL.md : 'description' manquante ou vide.")
 
 
-def _check_agents_markdown_hygiene(
+def _check_markdown_hygiene(
     path: Path, label: str, max_bytes: int, report: Report
 ) -> bytes:
-    """Vérifie UTF-8 sans BOM, LF et le budget octets maximal d'un fichier AGENTS.md."""
+    """Vérifie UTF-8 sans BOM, LF et le budget octets maximal d'un fichier Markdown."""
     raw_bytes = path.read_bytes()
     if raw_bytes.startswith(b"\xef\xbb\xbf"):
         report.error(f"{label} ne doit pas contenir de BOM UTF-8.")
@@ -327,11 +330,11 @@ def _validate_rules_and_templates(root: Path, report: Report) -> None:
     if not rules_file.is_file():
         report.error("rules/AGENTS.md introuvable.")
     else:
-        raw_bytes = _check_agents_markdown_hygiene(
+        raw_bytes = _check_markdown_hygiene(
             rules_file, "rules/AGENTS.md", 1000, report
         )
         if 600 < len(raw_bytes) <= 1000:
-            report.info(
+            report.warn(
                 f"rules/AGENTS.md pèse {len(raw_bytes)} octets (cible recommandée : <= 600 octets)."
             )
         rules_txt = raw_bytes.decode("utf-8", errors="replace")
@@ -339,7 +342,7 @@ def _validate_rules_and_templates(root: Path, report: Report) -> None:
             report.error("rules/AGENTS.md ne doit pas contenir de frontmatter YAML.")
 
     if root.name == "plugin" and (root.parent / "AGENTS.md").is_file():
-        _check_agents_markdown_hygiene(
+        _check_markdown_hygiene(
             root.parent / "AGENTS.md", "AGENTS.md (racine)", 2500, report
         )
 
@@ -354,7 +357,7 @@ def _validate_rules_and_templates(root: Path, report: Report) -> None:
 
     tpl_agents = templates_dir / "AGENTS.md"
     if tpl_agents.is_file():
-        _check_agents_markdown_hygiene(tpl_agents, "templates/AGENTS.md", 2500, report)
+        _check_markdown_hygiene(tpl_agents, "templates/AGENTS.md", 2500, report)
 
     tpl_cfg = templates_dir / "projects.json"
     if tpl_cfg.is_file():

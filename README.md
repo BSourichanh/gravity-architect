@@ -80,7 +80,7 @@ Dans Antigravity, utilisez ensuite `/gravity-architect [init|add|sync|status|spe
 - **Garde-fou `init_workspace.py` :** refuse (sauf `--force` ou atelier `projects.json` déjà existant) d'initialiser un atelier dans un dépôt produit (`.git` + manifeste code/plugin tel que `plugin/plugin.json`, `pyproject.toml`, `package.json`, `Cargo.toml`, `go.mod`, `pom.xml`, `setup.py`), avec prise en charge `--json`.
 - **Principes d'ingénierie dans `templates/AGENTS.md` :** l'invariant `Challenger` intègre explicitement `KISS, YAGNI, DRY, SOLID, CUPID`.
 - **Ergonomie `sync_tracking.py` :** repli vers `default_architect_home()` (`$GRAVITY_ARCHITECT_HOME` > `$GRAVITY_HOME/architect` > `~/.gemini/gravity/architect`) après détection `cwd` ; options `--max-stdout-bytes` (défaut `8192`, `0` = illimité, résumé compact pointant vers `tracking/snapshots/delta.md`) et `--max-changelog-lines` (défaut `45`).
-- **Hygiène `validate.py --strict` :** plafond strict `plugin/rules/AGENTS.md <= 1 000 o` (note info au-delà de `600 o`), contrôle BOM/LF/budget sur `AGENTS.md` racine (`<= 2 500 o`) et `plugin/templates/AGENTS.md`.
+- **Hygiène `validate.py --strict` :** plafond strict `plugin/rules/AGENTS.md <= 1 000 o` (avertissement bloquant sous `--strict` au-delà de `600 o`, compacté `<= 520 o`), contrôle BOM/LF/budget sur `plugin/skills/gravity-architect/SKILL.md` (`<= 6 000 o`, compacté `<= 5 800 o`), `AGENTS.md` racine (`<= 2 500 o`) et `plugin/templates/AGENTS.md`.
 
 ### Audits Code & Architecture & suivi compact (`v0.4.0`)
 - **Audits isolés (`audits/code/`) :** `init_workspace.py` déploie `audits/code/README.md`, `audits/code/_TEMPLATE.md` et `audits/agents/.gitkeep` ; le dossier `audits/code/` reste strictement séparé d'`audits/agents/`.
