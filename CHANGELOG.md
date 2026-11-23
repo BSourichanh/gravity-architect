@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-11-23
+
 ### Added
 - **Product Repository Guard (`plugin/scripts/init_workspace.py`):** refuses (exit code `1`, explicit `stderr` message or structured `--json` payload) to initialize a new workshop inside a directory containing `.git` and a code/plugin manifest (`plugin/plugin.json`, `plugin.json`, `pyproject.toml`, `package.json`, `Cargo.toml`, `go.mod`, `pom.xml`, `setup.py`) without an existing `projects.json`, unless `--force` is passed (preserving idempotence when `projects.json` exists and empty/git-only workshop initialization).
 - **CLI Ergonomics (`plugin/scripts/sync_tracking.py`):**

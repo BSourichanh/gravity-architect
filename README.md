@@ -108,7 +108,7 @@ python -m unittest discover -s tests -p "test_*.py" -v
 
 ## Documentation & Releases
 
-- [`CHANGELOG.md`](CHANGELOG.md) — Historique des releases (`v0.4.0`)
+- [`CHANGELOG.md`](CHANGELOG.md) — Historique des releases (`v0.5.0`)
 - [`plugin/README.md`](plugin/README.md) — Guide complet du plugin et des commandes `/gravity-architect`
 - [`AGENTS.md`](AGENTS.md) — Charte, invariants et vérifications obligatoires
 
