@@ -28,7 +28,18 @@ OFFICIAL_PLUGIN_FIELDS = {
     "repository",
     "disabled",
 }
-ALLOWED_LOCAL_MODULES = {"sync_tracking", "init_workspace", "validate"}
+ALLOWED_LOCAL_MODULES = {
+    "sync_tracking",
+    "init_workspace",
+    "validate",
+    "core",
+    "io_utils",
+    "discovery",
+    "git_collector",
+    "watches",
+    "delta",
+    "renderers",
+}
 MODULE_CONTRACT_FIELDS = {
     "schema_version",
     "id",
@@ -450,7 +461,7 @@ def validate_plugin(root: Path, report: Report) -> None:
     _validate_skills(root, report)
     _validate_rules_and_templates(root, report)
 
-    for sub in ("assets", "config", "rules", "scripts", "skills", "templates"):
+    for sub in ("assets", "config", "core", "rules", "scripts", "skills", "templates"):
         if not (root / sub).is_dir():
             report.error(f"Dossier requis manquant : {sub}/")
 

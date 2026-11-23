@@ -1,6 +1,6 @@
 # Plugin Gravity Architect
 
-Plugin Antigravity générique (**100 % bibliothèque standard Python 3**) pour piloter un atelier de conception multi-projets, produire des spécifications (`specs/`), préparer des briefs d'exécution autonomes (`handoffs/`), maintenir une couche **Hot / Cold** sous budgets tokens et synchroniser en lecture seule l'état des dépôts suivis.
+Plugin Antigravity générique (**100 % bibliothèque standard Python 3**) organisé autour d'un noyau modulaire SRP (`core/`) et de façades CLI rétrocompatibles (`scripts/`) pour piloter un atelier de conception multi-projets, produire des spécifications (`specs/`), préparer des briefs d'exécution autonomes (`handoffs/`), maintenir une couche **Hot / Cold** sous budgets tokens et synchroniser en lecture seule l'état des dépôts suivis.
 
 ## Commandes `/gravity-architect`
 

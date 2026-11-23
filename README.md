@@ -21,7 +21,8 @@ gravity-architect/
 │   ├── rules/AGENTS.md              # Règle légère d'activation
 │   ├── skills/gravity-architect/    # Skill /gravity-architect
 │   ├── templates/                   # Modèles d'ateliers Hot/Cold
-│   └── scripts/                     # sync_tracking.py (v5), init_workspace.py, validate.py
+│   ├── core/                        # Noyau SRP (io_utils, discovery, git_collector, watches, delta, renderers)
+│   └── scripts/                     # Façades CLI (sync_tracking.py, init_workspace.py) & validate.py
 └── tests/                           # Tests unitaires (unittest)
 ```
 
@@ -76,7 +77,11 @@ python plugin/scripts/sync_tracking.py --workspace ./mon-atelier --offline --ack
 
 Dans Antigravity, utilisez ensuite `/gravity-architect [init|add|sync|status|spec|handoff|archive|audit]` (voir [`plugin/README.md`](plugin/README.md)).
 
-### Garde-fou dépôt produit, principes & ergonomie CLI (`Unreleased`)
+### Découpage modulaire `plugin/core/` (`Unreleased`)
+- **Architecture SRP/DRY :** extraction des responsabilités cœur sous `plugin/core/` (`io_utils.py`, `discovery.py`, `git_collector.py`, `watches.py`, `delta.py`, `renderers.py`, tous ≤ 650 L, 100 % stdlib Python 3.10+, écriture atomique UTF-8 sans BOM / LF).
+- **Façades 100 % rétrocompatibles :** `plugin/scripts/sync_tracking.py` (≤ 250 L) et `plugin/scripts/init_workspace.py` (≤ 450 L) ré-exportent l'intégralité des symboles et options CLI existants.
+
+### Garde-fou dépôt produit, principes & ergonomie CLI (`v0.5.0`)
 - **Garde-fou `init_workspace.py` :** refuse (sauf `--force` ou atelier `projects.json` déjà existant) d'initialiser un atelier dans un dépôt produit (`.git` + manifeste code/plugin tel que `plugin/plugin.json`, `pyproject.toml`, `package.json`, `Cargo.toml`, `go.mod`, `pom.xml`, `setup.py`), avec prise en charge `--json`.
 - **Principes d'ingénierie dans `templates/AGENTS.md` :** l'invariant `Challenger` intègre explicitement `KISS, YAGNI, DRY, SOLID, CUPID`.
 - **Ergonomie `sync_tracking.py` :** repli vers `default_architect_home()` (`$GRAVITY_ARCHITECT_HOME` > `$GRAVITY_HOME/architect` > `~/.gemini/gravity/architect`) après détection `cwd` ; options `--max-stdout-bytes` (défaut `8192`, `0` = illimité, résumé compact pointant vers `tracking/snapshots/delta.md`) et `--max-changelog-lines` (défaut `45`).
