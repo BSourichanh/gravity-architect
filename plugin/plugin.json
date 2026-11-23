@@ -5,9 +5,9 @@
   "description": "Atelier générique de conception, specs, handoffs et suivi multi-projets lecture seule à architecture Hot/Cold pour Antigravity.",
   "logo": "assets/logo.svg",
   "suggestedPrompts": [
-    "/gravity-architect init",
-    "/gravity-architect sync",
-    "/gravity-architect status"
+    "/gravity-architect init — Créer un atelier Hot/Cold de conception multi-projets",
+    "/gravity-architect sync — Synchroniser les dépôts suivis via micro-delta",
+    "/gravity-architect audit — Auditer code et architecture en lecture seule"
   ],
   "author": {
     "name": "Gravity Contributors"

@@ -1,5 +1,11 @@
 # Plugin Gravity Architect
 
+> ### Démarrage 2 min & Place dans l'écosystème
+> - **Place :** **Palier 3 — Multi-projets** *(prérequis : [`gravity`](https://github.com/BSourichanh/gravity) Core)*
+> - **Rôle :** Orchestrer un atelier de conception Hot/Cold (`specs/`, `handoffs/`, `audits/code/`) et suivre plusieurs dépôts en lecture seule.
+> - **Démarrage :** `/gravity-architect init` puis `/gravity-architect sync`
+> - **Hub documentaire (`gravity/docs/`) :** [Démarrage rapide](https://github.com/BSourichanh/gravity/blob/main/docs/getting-started.md) · [Parcours utilisateur](https://github.com/BSourichanh/gravity/blob/main/docs/user-journey.md) · [Aide-mémoire commandes](https://github.com/BSourichanh/gravity/blob/main/docs/command-cheatsheet.md) · [Dépannage & cycle de vie](https://github.com/BSourichanh/gravity/blob/main/docs/troubleshooting-and-lifecycle.md)
+
 Plugin Antigravity générique (**100 % bibliothèque standard Python 3**) organisé autour d'un noyau modulaire SRP (`core/`) et de façades CLI rétrocompatibles (`scripts/`) pour piloter un atelier de conception multi-projets, produire des spécifications (`specs/`), préparer des briefs d'exécution autonomes (`handoffs/`), maintenir une couche **Hot / Cold** sous budgets tokens et synchroniser en lecture seule l'état des dépôts suivis.
 
 ## Commandes `/gravity-architect`

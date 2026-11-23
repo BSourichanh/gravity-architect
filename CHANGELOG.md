@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Changed
+- **Docs & UX Alignment:** aligned `plugin/plugin.json` `suggestedPrompts` on `/cmd — résumé` (`<= 100` chars) and added the "Démarrage 2 min & Place dans l'écosystème" callout (**Palier 3 — Multi-projets**, `gravity` Core prerequisite, `/gravity-architect init` -> `/gravity-architect sync`, `gravity/docs/` hub links) to `README.md` and `plugin/README.md`.
 - **Modular Core Split (`plugin/core/`):** extracted `plugin/scripts/sync_tracking.py` and `plugin/scripts/init_workspace.py` into 6 cohesive SRP modules under `plugin/core/` (`io_utils.py`, `discovery.py`, `git_collector.py`, `watches.py`, `delta.py`, `renderers.py`, each `<= 650 L`, 100 % Python 3.10+ stdlib, atomic UTF-8 no-BOM / LF writes).
 - **Backward-Compatible Script Facades:** reduced `plugin/scripts/sync_tracking.py` (`<= 250 L`) and `plugin/scripts/init_workspace.py` (`<= 450 L`) to strict backward-compatible facades re-exporting all existing API symbols and CLI flags.
 - **Validator & Tests:** updated `ALLOWED_LOCAL_MODULES` and required directories in `plugin/scripts/validate.py` for `core/` and its 6 submodules, and added `tests/test_core_structure.py` verifying line budgets, LF/no-BOM hygiene, facade re-exports, atomic writes, and recursive installation via `install.py`.
