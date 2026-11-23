@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.1] - 2026-11-24
+
 ### Added
 - **CLI Parity (`install.py`):** added `--strict` (overrides `--skip-validate`, runs read-only strict validation in `--check`, passes `--strict` to `agy plugin validate`) and `--no-fix-python` (documented ecosystem parity no-op) to reach `11/11` installer CLI flags.
 

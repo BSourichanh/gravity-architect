@@ -105,7 +105,7 @@ class TestCoreStructureAndFacades(unittest.TestCase):
                 self.assertTrue((target / "core" / fname).is_file(), f"core/{fname} non copié par install.py")
 
         manifest = json.loads((PLUGIN_ROOT / "plugin.json").read_text(encoding="utf-8"))
-        self.assertEqual(manifest["version"], "0.5.0")
+        self.assertEqual(manifest["version"], "0.5.1")
         self.assertLessEqual((PLUGIN_ROOT / "rules" / "AGENTS.md").stat().st_size, 513)
 
 
