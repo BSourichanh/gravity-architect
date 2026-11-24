@@ -44,4 +44,4 @@
 <!-- AUTO:END:ecosystem-hygiene -->
 
 ### Pistes actives
-- Déclarer les dépôts à suivre dans [`projects.json`](projects.json) puis exécuter `/gravity-architect`.
+- Suivre un dépôt existant avec `/gravity-architect add <chemin>` ou démarrer une conception avec `/gravity-architect spec <slug>`.

@@ -48,3 +48,14 @@ Fiche de référence chargée à la demande depuis [`SKILL.md`](../SKILL.md) *(p
   1. Inspecter `projects.json` de l'atelier courant.
   2. Si des dépôts suivis utilisent déjà des chemins relatifs sous `../` (`../<repo>`), proposer directement `../` en **1re option recommandée** via `ask_question` avant de scanner un autre dossier.
   3. Après accord utilisateur, exécuter `python "<PLUGIN_DIR>/scripts/init_workspace.py" --workspace . --discover --scan-dir ../ --json` puis sélectionner les candidats à ajouter via `--add`.
+
+## 5. Onboarding sur workspace vide (greenfield)
+
+- **Détection préalable (`./projects.json` absent) :** avant `sync`, `status`, `spec`, `handoff` ou `add`, vérifier que `./projects.json` existe dans le dossier courant (ou dans un sous-dossier atelier unique dans `.`). Ne **jamais** appeler `sync_tracking.py` en aveugle et ne pas confondre un dossier vide avec `<architect_home>/projects.json` : basculer directement sur le flux `init` guidé.
+- **Découverte & choix en 1 seul `ask_question` :** exécuter `init_workspace.py --workspace . --discover --json` (CWD seul). Si `candidates: []`, poser **1 seul `ask_question`** proposant :
+  1. *(a)* Initialiser un atelier vide (`0` projet),
+  2. *(b)* Scanner le dossier parent `../` (`--scan-dir ../`),
+  3. *(c)* Fournir des chemins directs de dépôts.
+- **Options & nommage :** `--name` reste facultatif (sinon nom dérivé automatiquement du dossier courant hors noms génériques vers `Mon Atelier Projets`), `public_mode=false` par défaut ; `public_mode` et `--watch-url` restent des options avancées.
+- **Initialisation rapide à `0` projet :** exécuter en 1 commande `python "<PLUGIN_DIR>/scripts/init_workspace.py" --workspace . --run-sync --offline` (0 passe `--ack-editorial` requise).
+- **Prochaines commandes à proposer :** `/gravity-architect add <chemin>` (suivre un dépôt existant) et `/gravity-architect spec <slug>` (démarrer une spécification).

@@ -64,6 +64,17 @@ from sync_tracking import (  # noqa: E402
 
 
 DEFAULT_WORKSPACE_NAME = "Mon Atelier Projets"
+GENERIC_WORKSPACE_DIR_NAMES = frozenset(
+    {"", ".", "/", "tmp", "temp", "workspace", "projects", "repos", "github"}
+)
+
+
+def _derive_default_workspace_name(ws_root: Path) -> str:
+    """Dérive un nom d'atelier lisible depuis `ws_root` hors noms génériques."""
+    raw_name = ws_root.name.strip()
+    if raw_name.lower() in GENERIC_WORKSPACE_DIR_NAMES:
+        return DEFAULT_WORKSPACE_NAME
+    return _humanize_id(raw_name) or DEFAULT_WORKSPACE_NAME
 
 
 def init_workspace(
@@ -136,7 +147,7 @@ def init_workspace(
     skipped: list[str] = []
 
     explicit_name = name is not None and bool(str(name).strip())
-    resolved_name = str(name).strip() if explicit_name else DEFAULT_WORKSPACE_NAME
+    resolved_name = str(name).strip() if explicit_name else _derive_default_workspace_name(ws_root)
 
     agents_tpl = (templates_dir / "AGENTS.md").read_text(encoding="utf-8")
     eco_tpl = (templates_dir / "ECOSYSTEM.md").read_text(encoding="utf-8").replace("{{WORKSPACE_NAME}}", resolved_name)
@@ -287,7 +298,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--scan-dir", type=Path, default=None, help="Dossier parent à scanner pour --discover (défaut : --workspace)")
     parser.add_argument("--json", action="store_true", help="Sortie JSON structurée (--discover, initialisation et erreurs)")
     parser.add_argument("--add", action="append", default=[], help="Ajoute un projet (<chemin> ou id=chemin) à un atelier existant (répétable)")
-    parser.add_argument("--name", default=None, help=f"Nom affiché de l'atelier dans ECOSYSTEM.md et projects.json (défaut : {DEFAULT_WORKSPACE_NAME})")
+    parser.add_argument("--name", default=None, help=f"Nom affiché de l'atelier dans ECOSYSTEM.md et projects.json (défaut : dérivé du dossier ou {DEFAULT_WORKSPACE_NAME})")
     parser.add_argument("--preset", choices=("generic", "antigravity-plugin"), default=None, help="Surcharge explicite du preset des projets (sinon auto-détecté)")
     parser.add_argument("--project", action="append", default=[], help="Déclare un projet initial au format id=chemin ou <chemin> (répétable)")
     parser.add_argument("--watch", action="append", choices=("antigravity",), default=[], help="Active un preset de veille officiel (répétable : antigravity)")

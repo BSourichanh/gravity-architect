@@ -668,36 +668,104 @@ class TestInitAndInstall(unittest.TestCase):
 
     def test_init_workspace_idempotent_preserves_workspace_name_in_registry(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
-            ws = Path(tmp) / "gravity-studio"
+            ws = Path(tmp) / "atelier-demo"
             reg_path = self._arch_home / "ateliers.json"
 
             with contextlib.redirect_stdout(io.StringIO()):
                 rc_init = init_workspace.main(
-                    ["--workspace", str(ws), "--name", "Gravity Studio"]
+                    ["--workspace", str(ws), "--name", "Atelier Perso"]
                 )
             self.assertEqual(rc_init, 0)
             data1 = json.loads(reg_path.read_text(encoding="utf-8"))
-            self.assertEqual(data1["ateliers"][0]["workspace_name"], "Gravity Studio")
+            self.assertEqual(data1["ateliers"][0]["workspace_name"], "Atelier Perso")
 
-            # Ré-exécution idempotente sans `name` ni `--name` -> préserve "Gravity Studio"
+            # Ré-exécution idempotente sans `name` ni `--name` -> préserve "Atelier Perso"
             res_idemp = init_workspace.init_workspace(ws)
             self.assertIn("projects.json", res_idemp["skipped"])
             data2 = json.loads(reg_path.read_text(encoding="utf-8"))
-            self.assertEqual(data2["ateliers"][0]["workspace_name"], "Gravity Studio")
+            self.assertEqual(data2["ateliers"][0]["workspace_name"], "Atelier Perso")
 
             with contextlib.redirect_stdout(io.StringIO()):
                 rc_cli_idemp = init_workspace.main(["--workspace", str(ws)])
             self.assertEqual(rc_cli_idemp, 0)
             data3 = json.loads(reg_path.read_text(encoding="utf-8"))
-            self.assertEqual(data3["ateliers"][0]["workspace_name"], "Gravity Studio")
+            self.assertEqual(data3["ateliers"][0]["workspace_name"], "Atelier Perso")
 
-            # Avec --force sans --name, projects.json est réécrit avec le défaut et le registre suit
+            # Avec --force sans --name, projects.json est réécrit avec le nom dérivé et le registre suit
             init_workspace.init_workspace(ws, force=True)
             data4 = json.loads(reg_path.read_text(encoding="utf-8"))
+            self.assertEqual(data4["ateliers"][0]["workspace_name"], "Atelier Demo")
+
+    def test_empty_workspace_onboarding_name_derivation_template_and_skill(self) -> None:
+        # 1. Dérivation du nom d'atelier hors noms génériques
+        self.assertEqual(
+            init_workspace._derive_default_workspace_name(Path("/any/atelier-demo")),
+            "Atelier Demo",
+        )
+        self.assertEqual(
+            init_workspace._derive_default_workspace_name(Path("/any/gravity_studio")),
+            "Gravity Studio",
+        )
+        self.assertEqual(
+            init_workspace._derive_default_workspace_name(Path("/any/---")),
+            init_workspace.DEFAULT_WORKSPACE_NAME,
+        )
+        for generic in ("", ".", "/", "tmp", "temp", "workspace", "projects", "repos", "github", "TMP"):
             self.assertEqual(
-                data4["ateliers"][0]["workspace_name"],
+                init_workspace._derive_default_workspace_name(Path(f"/any/{generic}") if generic not in ("", ".", "/") else Path(generic or ".")),
                 init_workspace.DEFAULT_WORKSPACE_NAME,
             )
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+
+            # Dossier métier sans --name -> nom dérivé + 0 projet + --run-sync --offline en 1 passe
+            ws_named = root / "mon-atelier-ia"
+            with contextlib.redirect_stdout(io.StringIO()):
+                rc = init_workspace.main(["--workspace", str(ws_named), "--run-sync", "--offline"])
+            self.assertEqual(rc, 0)
+            cfg_named = json.loads((ws_named / "projects.json").read_text(encoding="utf-8"))
+            self.assertEqual(cfg_named["workspace_name"], "Mon Atelier Ia")
+            self.assertEqual(cfg_named["projects"], [])
+            self.assertIn("# Tableau de bord — Mon Atelier Ia", (ws_named / "ECOSYSTEM.md").read_text(encoding="utf-8"))
+            self.assertTrue((ws_named / "tracking" / "snapshots" / "delta.md").is_file())
+
+            # Dossier générique sans --name -> DEFAULT_WORKSPACE_NAME
+            ws_generic = root / "workspace"
+            init_workspace.init_workspace(ws_generic)
+            cfg_generic = json.loads((ws_generic / "projects.json").read_text(encoding="utf-8"))
+            self.assertEqual(cfg_generic["workspace_name"], init_workspace.DEFAULT_WORKSPACE_NAME)
+
+            # --name explicite prioritaire sur le nom du dossier
+            ws_explicit = root / "autre-dossier"
+            init_workspace.init_workspace(ws_explicit, name="Nom Explicite")
+            cfg_explicit = json.loads((ws_explicit / "projects.json").read_text(encoding="utf-8"))
+            self.assertEqual(cfg_explicit["workspace_name"], "Nom Explicite")
+
+        # 2. Template ECOSYSTEM.md : pistes actives actionnables + blocs AUTO préservés + LF/no-BOM
+        eco_tpl_raw = (PLUGIN_ROOT / "templates" / "ECOSYSTEM.md").read_bytes()
+        self.assertFalse(eco_tpl_raw.startswith(b"\xef\xbb\xbf"))
+        self.assertNotIn(b"\r\n", eco_tpl_raw)
+        eco_tpl_txt = eco_tpl_raw.decode("utf-8")
+        for block in (
+            "ecosystem-meta",
+            "ecosystem-projects",
+            "ecosystem-watches",
+            "ecosystem-artifacts",
+            "ecosystem-hygiene",
+        ):
+            self.assertIn(f"<!-- AUTO:START:{block} -->", eco_tpl_txt)
+            self.assertIn(f"<!-- AUTO:END:{block} -->", eco_tpl_txt)
+        self.assertIn("/gravity-architect add <chemin>", eco_tpl_txt)
+        self.assertIn("/gravity-architect spec <slug>", eco_tpl_txt)
+
+        # 3. Consignes onboarding workspace vide dans SKILL.md et workflows-and-hygiene.md
+        skill_txt = (PLUGIN_ROOT / "skills" / "gravity-architect" / "SKILL.md").read_text(encoding="utf-8")
+        ref_txt = (PLUGIN_ROOT / "skills" / "gravity-architect" / "references" / "workflows-and-hygiene.md").read_text(encoding="utf-8")
+        for text in (skill_txt, ref_txt):
+            self.assertIn("--run-sync", text)
+            self.assertIn("projects.json", text)
+        self.assertIn("Onboarding sur workspace vide", ref_txt)
 
     def test_architect_posture_ro_code_vs_human_approved_closure_and_deploy(self) -> None:
         rules_raw = (PLUGIN_ROOT / "rules" / "AGENTS.md").read_bytes()

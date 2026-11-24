@@ -24,6 +24,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Updated `plugin/rules/AGENTS.md` (`<= 513 B`), `plugin/skills/gravity-architect/SKILL.md` (`<= 6 000 B`), and `plugin/templates/AGENTS.md` (`<= 2 500 B`) to strictly separate read-only source code in tracked repositories from human-approved closure operations (`git add`/`commit` on `dev`, `merge` `dev -> main`, SemVer tag, `install.py` / `ecosystem_install.py`, never automatic `git push`).
   - Documented the updated posture in `README.md` and `plugin/README.md` and added regression coverage in `tests/test_init_and_install.py`.
 
+- **Empty-Workspace Greenfield Onboarding (`init_workspace.py`, `SKILL.md`, `ECOSYSTEM.md`):**
+  - Added `_derive_default_workspace_name(ws_root)` in `plugin/scripts/init_workspace.py` to derive a readable default workspace name via `humanize_id(ws_root.name)` while falling back to `DEFAULT_WORKSPACE_NAME` (`"Mon Atelier Projets"`) for generic directory names (`""`, `"."`, `"/"`, `"tmp"`, `"temp"`, `"workspace"`, `"projects"`, `"repos"`, `"github"`) and preserving existing `workspace_name` on idempotent runs without `--name`.
+  - Updated `plugin/skills/gravity-architect/SKILL.md` (`<= 6 000 B`, keeping `plugin/rules/AGENTS.md <= 513 B` untouched) and added section `5. Onboarding sur workspace vide (greenfield)` in `plugin/skills/gravity-architect/references/workflows-and-hygiene.md` to route `/gravity-architect` to guided `init` when `./projects.json` is absent, offer a single `ask_question` (`0` project / `../` / direct paths), and initialize `0`-project workshops in one command (`init_workspace.py --workspace . --run-sync --offline`, without `--ack-editorial`).
+  - Updated `plugin/templates/ECOSYSTEM.md` under `### Pistes actives` to point to `/gravity-architect add <chemin>` and `/gravity-architect spec <slug>` while preserving all `<!-- AUTO:START/END -->` blocks and LF line endings, and synchronized tests (`tests/test_init_and_install.py`) and docs (`README.md`, `plugin/README.md`).
+
 ### Fixed
 - **Idempotent `init_workspace()` Registry Name:** preserved existing `workspace_name` from `projects.json` in `<architect_home>/ateliers.json` when `init_workspace()` is re-run idempotently without an explicit `--name` (`DEFAULT_WORKSPACE_NAME` fallback only on creation, `--force`, or explicit `--name`).
 
