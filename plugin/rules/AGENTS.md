@@ -1,6 +1,6 @@
 # Gravity Architect
 
 - `/gravity-architect [init|add|sync|status|spec|handoff|archive|audit]` : Hot/Cold, `audits/code/` séparé d'`audits/agents/`.
-- Code suivi RO (atelier initialisé seul) ; commit/release/install permis sur feu vert humain.
-- Scripts (`sync_tracking.py`, `init_workspace.py`, `validate.py`) depuis le plugin installé.
-- `init`/`add` : `--discover --json` + `ask_question` (jamais hors CWD sans accord), `sync_tracking.py --print-delta` → édition → `--offline --ack-editorial`.
+- Code suivi RO ; plan validé + vérifs vertes (fail-closed) : commit/push dev + install auto ; merge/main/release sur accord humain.
+- Scripts (`sync_tracking.py`, `init_workspace.py`, `validate.py`) du plugin installé.
+- `init`/`add` : `--discover --json` + `ask_question` (hors CWD sur accord) ; `--print-delta` → édition → `--offline --ack-editorial`.

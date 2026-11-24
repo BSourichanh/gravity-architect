@@ -783,20 +783,30 @@ class TestInitAndInstall(unittest.TestCase):
 
         rules_txt = rules_raw.decode("utf-8")
         self.assertIn("Code suivi RO", rules_txt)
-        self.assertIn("commit/release/install permis sur feu vert humain", rules_txt)
+        self.assertIn("fail-closed", rules_txt)
+        self.assertIn("commit/push dev + install auto", rules_txt)
+        self.assertIn("merge/main/release sur accord humain", rules_txt)
 
         tpl_txt = tpl_raw.decode("utf-8")
         self.assertIn("chef d'orchestre", tpl_txt)
         self.assertIn("Code en lecture seule hors de cet atelier", tpl_txt)
-        self.assertIn("Chef d'orchestre Git & installation (sur feu vert humain)", tpl_txt)
+        self.assertIn("Clôture automatique sur `dev`", tpl_txt)
+        self.assertIn("git push origin dev", tpl_txt)
+        self.assertIn("jamais `--force`", tpl_txt)
         self.assertIn("install.py", tpl_txt)
         self.assertIn("ecosystem_install.py", tpl_txt)
-        self.assertIn("jamais d'édition de code source ni `git push` sans demande explicite", tpl_txt)
+        self.assertIn("Release `main` & tags (accord humain explicite obligatoire)", tpl_txt)
+        self.assertIn("interdiction absolue de `merge dev -> main`", tpl_txt)
+        self.assertIn("Aucun `commit` ni `git push` automatique sur un simple `sync`", tpl_txt)
 
         skill_txt = skill_raw.decode("utf-8")
         self.assertIn("Code en lecture seule hors atelier", skill_txt)
-        self.assertIn("Clôture Git & installation (sur feu vert humain)", skill_txt)
-        self.assertIn("jamais `git push` sans demande explicite", skill_txt)
+        self.assertIn("Clôture Git & installation", skill_txt)
+        self.assertIn("fail-closed", skill_txt)
+        self.assertIn("git push origin dev", skill_txt)
+        self.assertIn("jamais `--force`", skill_txt)
+        self.assertIn("merge dev -> main", skill_txt)
+        self.assertIn("accord humain explicite", skill_txt)
         self.assertIn("lecture seule absolue", skill_txt)
 
         with tempfile.TemporaryDirectory() as tmp:
@@ -850,6 +860,10 @@ class TestInitAndInstall(unittest.TestCase):
         self.assertIn("gravity-metrics", skill_txt)
         self.assertIn("references/workflows-and-hygiene.md) §3", skill_txt)
         for token in (
+            "fail-closed",
+            "git push origin dev",
+            "merge dev -> main",
+            "accord humain explicite",
             "gravity-metrics/scripts/cli.py archive <conversation_id>",
             "--update-sealed",
             "--force",
@@ -857,6 +871,14 @@ class TestInitAndInstall(unittest.TestCase):
             "no-op silencieux",
         ):
             self.assertIn(token, ref_txt, f"Règle clôture manquante dans workflows-and-hygiene.md : {token}")
+
+        idx_verifs = ref_txt.index("1. **Retours & vérifications")
+        idx_dev_push = ref_txt.index("2. **Clôture auto sur `dev`")
+        idx_archive = ref_txt.index("3. **Archivage atelier & `--ack-editorial`")
+        idx_metrics = ref_txt.index("4. **Clôture `gravity-metrics`")
+        self.assertLess(idx_verifs, idx_dev_push)
+        self.assertLess(idx_dev_push, idx_archive)
+        self.assertLess(idx_archive, idx_metrics)
 
 
 if __name__ == "__main__":

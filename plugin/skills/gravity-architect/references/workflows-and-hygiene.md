@@ -41,12 +41,12 @@ Fiche de référence chargée à la demande depuis [`SKILL.md`](../SKILL.md) *(p
 
 ### Clôture ordonnée d'un lot & `gravity-metrics` final
 Respecter strictement ces 4 étapes en fin de cycle :
-1. **Retours & vérifications :** confirmer que les retours Bridge sont clos (`0` job actif) et que toutes les vérifications obligatoires sont vertes.
-2. **Archivage atelier :** déplacer `specs/` → `specs/archive/` et `handoffs/` → `handoffs/archive/` (`done`), actualiser les pistes actives puis exécuter `sync_tracking.py --offline --ack-editorial --print-delta`.
-3. **Clôture Git & réinstallation écosystème *(sur feu vert humain explicite)* :** exécuter commit sur `dev` / `merge` / tag / réinstallation coordonnée via `ecosystem_install.py --update --modules <...> --strict` (`python3` sous Linux/macOS, `python` sous Windows, plutôt qu'un `install.py --strict` isolé afin de maintenir la cohérence entre modules installés) et éventuel `git push` *(jamais `git push` sans demande explicite)*.
+1. **Retours & vérifications (*fail-closed* global) :** confirmer que le plan/spec est validé, la revue propre, les retours Bridge clos (`0` job actif) et **100 %** des vérifications obligatoires vertes. Si une vérification échoue, régresse, si un dépôt n'est pas sur `dev` ou signale un blocage, **stopper avant tout `commit`/`push`** sur l'ensemble du lot et demander arbitrage humain.
+2. **Clôture auto sur `dev` & réinstallation écosystème :** exécuter automatiquement `git add`/`commit` sur `dev` + `git push origin dev` *(jamais `--force`)* + réinstallation coordonnée via `ecosystem_install.py --update --modules <...> --strict` (`python3` sous Linux/macOS, `python` sous Windows, plutôt qu'un `install.py --strict` isolé afin de maintenir la cohérence entre modules installés). Les opérations `merge dev -> main`, tag SemVer et release exigent un **accord humain explicite** *(un simple `/gravity-architect sync`, même avec `--commit`, ne fait ni `commit` sur les dépôts suivis ni `git push`)*.
+3. **Archivage atelier & `--ack-editorial` :** une fois les dépôts suivis propres et poussés sur `dev`, déplacer `specs/` → `specs/archive/` et `handoffs/` → `handoffs/archive/` (`done`), actualiser les pistes actives puis exécuter `sync_tracking.py --offline --ack-editorial --print-delta`.
 4. **Clôture `gravity-metrics` en toute dernière étape *(session racine d'atelier uniquement)* :** si `~/.gemini/config/plugins/gravity-metrics/scripts/cli.py` existe *(ou `%USERPROFILE%\.gemini\config\plugins\gravity-metrics\scripts\cli.py` sous Windows ; no-op silencieux — zéro erreur ni message — si absent)*, clore la capture de la session racine courante :
    - `python3 ~/.gemini/config/plugins/gravity-metrics/scripts/cli.py archive <conversation_id> -l "<slug>" --workspace .` *(sous Windows : `python` sur le chemin `%USERPROFILE%\...`)*
-   - Si un `git push` ou une release intervient un tour plus tard dans la **même** conversation déjà scellée, ré-exécuter avec `--update-sealed`.
+   - Si une release (`merge dev -> main`, tag SemVer ou push `main`/tags) intervient un tour plus tard dans la **même** conversation déjà scellée, ré-exécuter avec `--update-sealed`.
    - Ne **jamais** passer `--force`, et tolérer un éventuel blocage `PendingBridgeJobsError` si d'autres jobs Bridge restent actifs.
 
 ## 4. `/gravity-architect add` sans argument (`../`)

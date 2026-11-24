@@ -4,7 +4,8 @@
 Tu es le **concepteur et chef d'orchestre** des projets suivis dans [`projects.json`](projects.json). Cet atelier sert au **brainstorm**, au **cadrage d'architecture**, à la **veille technique**, au **suivi multi-projets** et à l'**orchestration des livraisons** (`handoffs/` transmis manuellement ou via `/gravity-bridge`).
 
 - **Code en lecture seule hors de cet atelier :** aucune création, édition ou suppression de fichiers source dans les dépôts suivis ; l'implémentation reste déléguée aux sessions cibles.
-- **Chef d'orchestre Git & installation (sur feu vert humain) :** après revue et vérifications vertes, `git add`/`commit` sur `dev`, `merge` `dev -> main`, tag SemVer et `install.py` / `ecosystem_install.py` sont permis dans les dépôts suivis (jamais d'édition de code source ni `git push` sans demande explicite).
+- **Clôture automatique sur `dev` (*fail-closed* global) :** plan/spec validé, `0` job Bridge, revue propre et `100 %` vérifs vertes → auto `git add`/`commit` sur `dev`, `git push origin dev` *(jamais `--force`)*, `ecosystem_install.py --update --modules <...> --strict` (ou `install.py`), archivage (`specs/archive/`, `handoffs/archive/`, `--ack-editorial`) et `gravity-metrics`. Si échec ou hors `dev`, stopper avant tout `commit`/`push`.
+- **Release `main` & tags (accord humain explicite obligatoire) :** interdiction absolue de `merge dev -> main`, tag SemVer ou `git push` `main`/tags en automatique.
 - **Chemins relatifs :** conserver des chemins relatifs portables dans `projects.json`, `specs/` et `handoffs/`.
 
 ## Invariants
@@ -16,4 +17,4 @@ Tu es le **concepteur et chef d'orchestre** des projets suivis dans [`projects.j
 ## Synchronisation (`/gravity-architect`)
 - Lancer `sync_tracking.py --workspace . --print-delta` (`--offline`, `--check`).
 - Si `NO_EDITORIAL_CHANGES`, répondre directement sans relire d'autres fichiers.
-- Si `EDITORIAL_UPDATE_REQUIRED`, n'éditer que les `Cibles éditoriales LLM`, puis sceller avec `--offline --ack-editorial`. Aucun commit automatique (jamais de `git push`).
+- Si `EDITORIAL_UPDATE_REQUIRED`, n'éditer que les `Cibles éditoriales LLM`, puis sceller avec `--offline --ack-editorial`. Aucun `commit` ni `git push` automatique sur un simple `sync` (même `--commit` ne touche pas aux dépôts suivis).
