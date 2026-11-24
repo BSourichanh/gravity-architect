@@ -607,6 +607,28 @@ class TestInitAndInstall(unittest.TestCase):
             self.assertIn("templates/AGENTS.md", joined)
             self.assertIn("AGENTS.md (racine)", joined)
 
+            # Restaure SKILL.md, templates/AGENTS.md et AGENTS.md racine ; casse references/workflows-and-hygiene.md (CRLF + BOM) puis absent -> erreurs bloquantes
+            shutil.copy2(PLUGIN_ROOT / "skills" / "gravity-architect" / "SKILL.md", skill_path)
+            shutil.copy2(PLUGIN_ROOT / "templates" / "AGENTS.md", plug / "templates" / "AGENTS.md")
+            (fake_repo / "AGENTS.md").write_text("# Root Agents\n- OK\n", encoding="utf-8", newline="\n")
+            ref_path = plug / "skills" / "gravity-architect" / "references" / "workflows-and-hygiene.md"
+            ref_path.write_bytes(b"\xef\xbb\xbf# Ref\r\n")
+            ref_bad_rep = validate.Report()
+            validate.validate_plugin(plug, ref_bad_rep)
+            self.assertFalse(ref_bad_rep.ok(strict=True))
+            ref_bad_joined = " | ".join(ref_bad_rep.errors)
+            self.assertIn("workflows-and-hygiene.md", ref_bad_joined)
+            self.assertIn("CRLF", ref_bad_joined)
+
+            ref_path.unlink()
+            ref_missing_rep = validate.Report()
+            validate.validate_plugin(plug, ref_missing_rep)
+            self.assertFalse(ref_missing_rep.ok(strict=True))
+            self.assertTrue(
+                any("workflows-and-hygiene.md introuvable" in e for e in ref_missing_rep.errors),
+                ref_missing_rep.errors,
+            )
+
     def test_registry_on_init_add_discover_and_skip_env(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -716,6 +738,45 @@ class TestInitAndInstall(unittest.TestCase):
             deployed_raw = (ws / "AGENTS.md").read_bytes()
             self.assertLessEqual(len(deployed_raw), 2500)
             self.assertEqual(deployed_raw, tpl_raw)
+
+    def test_skill_references_hygiene_budgets_and_critical_rules(self) -> None:
+        skill_path = PLUGIN_ROOT / "skills" / "gravity-architect" / "SKILL.md"
+        ref_path = PLUGIN_ROOT / "skills" / "gravity-architect" / "references" / "workflows-and-hygiene.md"
+        rules_path = PLUGIN_ROOT / "rules" / "AGENTS.md"
+
+        self.assertTrue(skill_path.is_file())
+        self.assertTrue(ref_path.is_file())
+        self.assertLessEqual(rules_path.stat().st_size, 513)
+
+        skill_raw = skill_path.read_bytes()
+        ref_raw = ref_path.read_bytes()
+        for label, raw in (("SKILL.md", skill_raw), ("workflows-and-hygiene.md", ref_raw)):
+            self.assertFalse(raw.startswith(b"\xef\xbb\xbf"), f"BOM dans {label}")
+            self.assertNotIn(b"\r\n", raw, f"CRLF dans {label}")
+
+        self.assertLessEqual(len(skill_raw), 6000, f"SKILL.md dépasse 6000 o ({len(skill_raw)})")
+
+        skill_txt = skill_raw.decode("utf-8")
+        ref_txt = ref_raw.decode("utf-8")
+        self.assertIn("references/workflows-and-hygiene.md", skill_txt)
+
+        for label, rx in validate.PRIVATE_LEAK_RES:
+            self.assertIsNone(rx.search(ref_txt), f"Fuite ({label}) dans workflows-and-hygiene.md")
+        self.assertIsNone(validate.FORBIDDEN_MOD_RE.search(ref_txt))
+
+        critical_tokens = (
+            "non déployé",
+            "--ack-editorial",
+            "ecosystem_install.py",
+            "get_job",
+            "exit_plan_mode",
+            "NO_EDITORIAL_CHANGES",
+            "../",
+            "/compact",
+        )
+        for token in critical_tokens:
+            self.assertIn(token, skill_txt, f"Règle critique manquante dans SKILL.md : {token}")
+            self.assertIn(token, ref_txt, f"Règle critique manquante dans workflows-and-hygiene.md : {token}")
 
 
 if __name__ == "__main__":

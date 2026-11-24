@@ -103,6 +103,10 @@ class TestCoreStructureAndFacades(unittest.TestCase):
             self.assertEqual(rc, 0)
             for fname in CORE_MODULES:
                 self.assertTrue((target / "core" / fname).is_file(), f"core/{fname} non copié par install.py")
+            self.assertTrue(
+                (target / "skills" / "gravity-architect" / "references" / "workflows-and-hygiene.md").is_file(),
+                "references/workflows-and-hygiene.md non copié par install.py",
+            )
 
         manifest = json.loads((PLUGIN_ROOT / "plugin.json").read_text(encoding="utf-8"))
         self.assertEqual(manifest["version"], "0.5.1")

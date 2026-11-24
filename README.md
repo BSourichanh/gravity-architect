@@ -25,7 +25,7 @@ gravity-architect/
 │   ├── README.md                    # Guide utilisateur du plugin
 │   ├── assets/logo.svg              # Logo carré 1:1
 │   ├── rules/AGENTS.md              # Règle légère d'activation
-│   ├── skills/gravity-architect/    # Skill /gravity-architect
+│   ├── skills/gravity-architect/    # Skill /gravity-architect & references/workflows-and-hygiene.md
 │   ├── templates/                   # Modèles d'ateliers Hot/Cold
 │   ├── core/                        # Noyau SRP (io_utils, discovery, git_collector, watches, delta, renderers)
 │   └── scripts/                     # Façades CLI (sync_tracking.py, init_workspace.py) & validate.py
@@ -88,6 +88,7 @@ Dans Antigravity, utilisez ensuite `/gravity-architect [init|add|sync|status|spe
 - **Registre centralisé (`<architect_home>/ateliers.json`) :** `init_workspace.py` (`init`, `--add`) et `sync_tracking.py` (hors `--check` / `--dry-run` et `--discover`) enregistrent automatiquement chaque atelier valide (`projects.json` + `ECOSYSTEM.md`, ordre MRU, max `20`, écriture atomique) dans `<architect_home>/ateliers.json` (`$GRAVITY_ARCHITECT_HOME` > `$GRAVITY_HOME/architect` > `~/.gemini/gravity/architect`) sans écrire dans le workspace cible. Opt-out via `GRAVITY_ARCHITECT_SKIP_REGISTRY=1` ; `resolve_workspace_root()` reste inchangé.
 - **Architecture SRP/DRY :** extraction des responsabilités cœur sous `plugin/core/` (`io_utils.py`, `discovery.py`, `git_collector.py`, `watches.py`, `delta.py`, `renderers.py`, tous ≤ 650 L, 100 % stdlib Python 3.10+, écriture atomique UTF-8 sans BOM / LF).
 - **Façades 100 % rétrocompatibles :** `plugin/scripts/sync_tracking.py` (≤ 250 L) et `plugin/scripts/init_workspace.py` (≤ 450 L) ré-exportent l'intégralité des symboles et options CLI existants.
+- **Hygiène tokens, passerelle Bridge & `references/` :** compactage de `plugin/skills/gravity-architect/SKILL.md` (`<= 6 000 o`) avec déport des procédures détaillées dans `plugin/skills/gravity-architect/references/workflows-and-hygiene.md` (statut `rédigé, non déployé` et passerelle Bridge en 1 `ask_question`, no-op Plan Mode sans `exit_plan_mode`, délégation `research`, garde WIP sur `--ack-editorial`, `manage_thread(action="get_job")`, clôture via `ecosystem_install.py --update --modules <...> --strict`, et proposition `../` sur `/gravity-architect add`), contrôlé par `plugin/scripts/validate.py --strict`.
 
 ### Garde-fou dépôt produit, principes & ergonomie CLI (`v0.5.0`)
 - **Garde-fou `init_workspace.py` :** refuse (sauf `--force` ou atelier `projects.json` déjà existant) d'initialiser un atelier dans un dépôt produit (`.git` + manifeste code/plugin tel que `plugin/plugin.json`, `pyproject.toml`, `package.json`, `Cargo.toml`, `go.mod`, `pom.xml`, `setup.py`), avec prise en charge `--json`.

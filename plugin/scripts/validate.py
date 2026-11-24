@@ -313,25 +313,39 @@ def _validate_skills(root: Path, report: Report) -> None:
     fm_match = re.match(r"^\s*---\r?\n(.*?)\r?\n---\r?\n", txt, re.DOTALL)
     if not fm_match:
         report.error("skills/gravity-architect/SKILL.md : frontmatter YAML manquant.")
-        return
-    fm = fm_match.group(1)
-    if not re.search(r"^name:\s*gravity-architect\s*$", fm, re.MULTILINE):
-        report.error("skills/gravity-architect/SKILL.md : 'name: gravity-architect' manquant.")
-    desc_m = re.search(r"^description:\s*(.+)$", fm, re.MULTILINE)
-    if not desc_m or not desc_m.group(1).strip():
-        report.error("skills/gravity-architect/SKILL.md : 'description' manquante ou vide.")
+    else:
+        fm = fm_match.group(1)
+        if not re.search(r"^name:\s*gravity-architect\s*$", fm, re.MULTILINE):
+            report.error("skills/gravity-architect/SKILL.md : 'name: gravity-architect' manquant.")
+        desc_m = re.search(r"^description:\s*(.+)$", fm, re.MULTILINE)
+        if not desc_m or not desc_m.group(1).strip():
+            report.error("skills/gravity-architect/SKILL.md : 'description' manquante ou vide.")
+
+    refs_dir = skills_dir / "gravity-architect" / "references"
+    hygiene_ref = refs_dir / "workflows-and-hygiene.md"
+    if not hygiene_ref.is_file():
+        report.error(
+            "skills/gravity-architect/references/workflows-and-hygiene.md introuvable."
+        )
+    if refs_dir.is_dir():
+        for ref_md in sorted(refs_dir.glob("*.md")):
+            if not ref_md.is_file():
+                continue
+            _check_markdown_hygiene(
+                ref_md, f"skills/gravity-architect/references/{ref_md.name}", None, report
+            )
 
 
 def _check_markdown_hygiene(
-    path: Path, label: str, max_bytes: int, report: Report
+    path: Path, label: str, max_bytes: int | None, report: Report
 ) -> bytes:
-    """Vérifie UTF-8 sans BOM, LF et le budget octets maximal d'un fichier Markdown."""
+    """Vérifie UTF-8 sans BOM, LF et le budget octets maximal optionnel d'un fichier Markdown."""
     raw_bytes = path.read_bytes()
     if raw_bytes.startswith(b"\xef\xbb\xbf"):
         report.error(f"{label} ne doit pas contenir de BOM UTF-8.")
     if b"\r\n" in raw_bytes:
         report.error(f"{label} doit utiliser des fins de ligne LF (\\n), CRLF détecté.")
-    if len(raw_bytes) > max_bytes:
+    if max_bytes is not None and len(raw_bytes) > max_bytes:
         report.error(f"{label} dépasse {max_bytes} octets ({len(raw_bytes)}).")
     return raw_bytes
 

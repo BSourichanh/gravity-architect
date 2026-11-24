@@ -13,8 +13,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Integrated `register_atelier()` (with facade re-exports) into `init_workspace()`, `add_projects_to_workspace()`, and `run_sync(dry_run=False)` while skipping writes on `--discover` and `--check` / `--dry-run`.
   - Updated `_run_e2e_dry_run()` in `plugin/scripts/validate.py` to isolate `GRAVITY_ARCHITECT_HOME` and verify `ateliers.json` creation on `init_workspace.py` and immutability on `sync_tracking.py --check`.
   - Added isolated `unittest` coverage for `register_atelier()`, registry integration, and test-suite isolation from `~/.gemini/`.
+- **Skill Progressive Disclosure & Hygiene (`skills/gravity-architect/references/workflows-and-hygiene.md`):**
+  - Added `plugin/skills/gravity-architect/references/workflows-and-hygiene.md` (UTF-8 without BOM, LF, zero leaks) detailing post-handoff Bridge gateway, Plan Mode / token hygiene, WIP `--ack-editorial` guard, `manage_thread(action="get_job")`, `ecosystem_install.py --update --modules <...> --strict` closure guidance, and `../` discovery on argumentless `/gravity-architect add`.
+  - Enforced existence and UTF-8/LF hygiene checks for `skills/gravity-architect/references/*.md` in `plugin/scripts/validate.py` (`_validate_skills()`) and added regression tests in `tests/test_core_structure.py` and `tests/test_init_and_install.py`.
 
 ### Changed
+- **Skill Compaction & Operational Hygiene (`SKILL.md <= 6 000 B`):**
+  - Compacted `plugin/skills/gravity-architect/SKILL.md` (`<= 6 000 B`, keeping `plugin/rules/AGENTS.md <= 513 B` untouched) to embed the 5 operational rules (Bridge gateway with `rédigé, non déployé` status and single summary `ask_question`, Plan Mode no-op `sync` without `exit_plan_mode`, concise `exit_plan_mode` / read-only `research` delegation / `/compact` suggestion, WIP guard on `--ack-editorial` + `get_job` + `ecosystem_install.py`, and `../` recommendation on `/gravity-architect add`) with a relative link to `references/workflows-and-hygiene.md`, and synchronized `README.md` and `plugin/README.md`.
 - **Architect Posture (Read-Only Source Code + Human-Approved Git/Release/Install Closure):**
   - Updated `plugin/rules/AGENTS.md` (`<= 513 B`), `plugin/skills/gravity-architect/SKILL.md` (`<= 6 000 B`), and `plugin/templates/AGENTS.md` (`<= 2 500 B`) to strictly separate read-only source code in tracked repositories from human-approved closure operations (`git add`/`commit` on `dev`, `merge` `dev -> main`, SemVer tag, `install.py` / `ecosystem_install.py`, never automatic `git push`).
   - Documented the updated posture in `README.md` and `plugin/README.md` and added regression coverage in `tests/test_init_and_install.py`.

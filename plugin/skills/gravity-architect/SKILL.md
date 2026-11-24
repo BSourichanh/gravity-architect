@@ -6,45 +6,45 @@ description: >-
   ou lors d'une mise à jour d'un dépôt suivi.
 ---
 
-# Gravity Architect — Atelier de Conception & Suivi Multi-Projets
+# Gravity Architect — Atelier & Suivi Multi-Projets
+
+Détails (passerelle Bridge, hygiène Plan Mode, callbacks & clôture) : [workflows-and-hygiene.md](references/workflows-and-hygiene.md).
 
 ## Règles strictes
-1. **Résolution du moteur :** scripts dans `~/.gemini/config/plugins/gravity-architect/scripts/` (ou `./plugin/scripts/` en local).
-2. **Code en lecture seule hors atelier :** ne jamais créer, éditer ou supprimer de fichiers source dans les dépôts suivis (`projects.json`) ; l'implémentation reste déléguée aux sessions cibles.
-   - **Clôture Git & installation (sur feu vert humain) :** après revue et vérifications vertes, `git add`/`commit` sur `dev`, `merge` `dev -> main`, tag SemVer et `install.py` / `ecosystem_install.py` sont permis dans les dépôts suivis (jamais `git push` sans demande explicite).
-3. **Économie maximale de tokens :** ne jamais inspecter manuellement les dépôts suivis avant d'avoir exécuté `sync_tracking.py --print-delta` et lu le micro-delta.
-4. **Registre centralisé :** `init_workspace.py` et `sync_tracking.py` (hors `--check`/`--dry-run`/`--discover`) enregistrent l'atelier dans `<architect_home>/ateliers.json` (`GRAVITY_ARCHITECT_SKIP_REGISTRY=1` pour désactiver).
+1. **Moteur :** scripts dans `~/.gemini/config/plugins/gravity-architect/scripts/` (ou `./plugin/scripts/`).
+2. **Code en lecture seule hors atelier :** zéro création/édition/suppression de source dans les dépôts suivis (`projects.json`) ; implémentation déléguée aux sessions cibles.
+   - **Clôture Git & installation (sur feu vert humain) :** après revue/vérifs vertes, `git add`/`commit` sur `dev`, `merge` `dev -> main`, tag SemVer et `install.py` / `ecosystem_install.py` permis (jamais `git push` sans demande explicite). Après commit sur `dev`, recommander `ecosystem_install.py --update --modules <...> --strict` (`python3` Linux/macOS, `python` Windows) plutôt qu'`install.py --strict`.
+3. **Hygiène tokens & Plan Mode :**
+   - Exécuter `sync_tracking.py --print-delta` avant d'inspecter les dépôts ; déléguer l'exploration multi-fichiers à un sous-agent lecture seule (`research`).
+   - Ne jamais recopier de spec/handoff complet dans `exit_plan_mode(plan=...)` (plan structurel concis seul).
+   - Suggérer `/compact` ou une nouvelle session après production des handoffs.
+4. **Registre :** `init_workspace.py` et `sync_tracking.py` (hors `--check`/`--dry-run`/`--discover`) enregistrent l'atelier dans `<architect_home>/ateliers.json` (`GRAVITY_ARCHITECT_SKIP_REGISTRY=1` pour désactiver).
 
 ## Routage
 
-### 1. `/gravity-architect init` *(onboarding hybride guidé)*
-1. **Atelier déjà initialisé (`projects.json` présent) :** exécuter `python "<PLUGIN_DIR>/scripts/init_workspace.py" --workspace .` *(idempotent sans `--force`)* et rappeler `/gravity-architect add <chemin...>` pour ajouter des dépôts.
-2. **Atelier vierge :** découverte lecture seule 0-token dans le dossier courant uniquement : `python "<PLUGIN_DIR>/scripts/init_workspace.py" --workspace . --discover --json`.
-3. **Si `candidates` est vide :** ne **jamais** scanner `../` automatiquement ; demander via `ask_question` le dossier cible (`../` en raccourci) ou des chemins directs, puis relancer `init_workspace.py --workspace . --discover --scan-dir "<CIBLE>" --json`.
-4. **Sélection guidée (1 seul `ask_question`) :** choix multiple des dépôts (`candidates`), veille (`antigravity` recommandée si plugin Antigravity détecté, ou aucune / `--watch-url`), `public_mode` (`false` par défaut).
-5. **Déploiement & 1re synchro :** exécuter `init_workspace.py --workspace .` (`--project ...`, `--watch antigravity`, `--watch-url id=url`, `--public-mode`, `--name "<Titre>"`), puis *(sauf `--no-sync`)* : `sync_tracking.py --workspace . --print-delta` → remplir `tracking/projects/*.md` (et `tracking/antigravity/IMPACT.md` si veille) → `sync_tracking.py --workspace . --offline --ack-editorial --print-delta` pour sceller `tracking/snapshots/editorial_state.json`.
+### 1. `/gravity-architect init` *(onboarding guidé)*
+1. **Déjà initialisé (`projects.json` présent) :** `python "<PLUGIN_DIR>/scripts/init_workspace.py" --workspace .` *(idempotent sans `--force`)* ; rappeler `/gravity-architect add <chemin...>`.
+2. **Vierge :** `init_workspace.py --workspace . --discover --json` (CWD seul). Si `candidates` vide, jamais de scan `../` sans accord : demander le dossier via `ask_question` (`../` en raccourci) puis `--scan-dir "<CIBLE>"`.
+3. **Sélection (1 `ask_question`) :** dépôts, veille (`antigravity` recommandée si plugin détecté, ou aucune / `--watch-url`), `public_mode` (`false` par défaut).
+4. **Déploiement :** `init_workspace.py --workspace .` (`--project`, `--watch`, `--public-mode`, `--name`) puis *(hors `--no-sync`)* `sync_tracking.py --print-delta` → fiches/`IMPACT.md` → `--offline --ack-editorial --print-delta`.
 
-### 2. `/gravity-architect add <chemin...>` *(ajout incrémental)*
-1. Exécuter `python "<PLUGIN_DIR>/scripts/init_workspace.py" --workspace . --add "<CHEMIN>"` *(répétable, `<chemin>` ou `id=chemin` ; fail-closed si `projects.json` absent ou doublon d'`id`/chemin)*.
-2. Enchaîner *(sauf `--no-sync`)* `sync_tracking.py --workspace . --print-delta` → compléter `tracking/projects/<id>.md` → `sync_tracking.py --workspace . --offline --ack-editorial --print-delta`.
+### 2. `/gravity-architect add [chemin...]`
+- **Sans argument :** si `projects.json` référence déjà des dépôts sous `../`, proposer `../` en 1re option recommandée via `ask_question` avant de scanner ailleurs (`--discover --scan-dir ../ --json`).
+- **Avec chemin(s) :** `init_workspace.py --workspace . --add "<CHEMIN>"` *(répétable, `<chemin>` ou `id=chemin`, fail-closed si `projects.json` absent/doublon)*, puis *(hors `--no-sync`)* `sync_tracking.py --print-delta` → `tracking/projects/<id>.md` → `--offline --ack-editorial --print-delta`.
 
 ### 3. `/gravity-architect status`
-- Lire uniquement `tracking/snapshots/delta.md` (ou `ECOSYSTEM.md` s'il n'existe pas encore) dans l'atelier détecté, sans relancer de synchro.
-- Résumer état courant, chantiers WIP et alertes hygiène en 5–8 lignes.
+- Lire uniquement `tracking/snapshots/delta.md` (ou `ECOSYSTEM.md`) dans l'atelier détecté, sans relancer de synchro ; résumer état, WIP et alertes en 5–8 lignes.
 
 ### 4. `/gravity-architect` ou `/gravity-architect sync` *(défaut)*
-1. Exécuter **1 seule commande** : `python "<PLUGIN_DIR>/scripts/sync_tracking.py" --print-delta` *(options : `--workspace <dir>`, `--offline`, `--check`, `--ack-editorial`, `--max-stdout-bytes <N>`, `--max-changelog-lines <N>`)*.
-2. Lire le micro-delta :
-   - **`NO_EDITORIAL_CHANGES` (sans `--full`) :** ne lire aucun autre fichier ; répondre en 5–8 lignes max (statut, fichiers auto-mis à jour `<!-- AUTO:START/END -->`, alertes hygiène).
-   - **`EDITORIAL_UPDATE_REQUIRED` (ou `--full`) :** lire **uniquement** `Cibles éditoriales LLM`, appliquer des éditions minimales avec les extraits `CHANGELOG.md`, diffs `AGENTS.md` et puces de veille du delta (préserver `<!-- AUTO:START/... -->` / `<!-- AUTO:END/... -->` et budgets Hot), puis exécuter `python "<PLUGIN_DIR>/scripts/sync_tracking.py" --offline --ack-editorial --print-delta` pour sceller `tracking/snapshots/editorial_state.json` et confirmer `NO_EDITORIAL_CHANGES`.
-3. **Commit Git :** ne **pas** committer par défaut ; uniquement si `--commit` est demandé dans l'atelier, sans jamais `git push`.
+1. **1 seule commande :** `python "<PLUGIN_DIR>/scripts/sync_tracking.py" --print-delta` *(options : `--workspace`, `--offline`, `--check`, `--ack-editorial`, `--max-stdout-bytes`, `--max-changelog-lines`)*.
+2. **No-op en Plan Mode :** si `--check --print-delta` retourne `NO_EDITORIAL_CHANGES` avec `0` fichier auto-mis à jour (et atelier dans `<architect_home>/ateliers.json`), répondre directement en 5–8 lignes sans appeler `exit_plan_mode`.
+3. **`EDITORIAL_UPDATE_REQUIRED` / `--full` :** lire uniquement `Cibles éditoriales LLM`, appliquer des éditions minimales (préserver `<!-- AUTO:START/END -->` et budgets Hot), puis `--offline --ack-editorial --print-delta`.
+4. **Garde WIP & Bridge :** ne **jamais** exécuter `--ack-editorial` tant que des lots restent en WIP non commité dans les dépôts suivis ; consulter les jobs Bridge via `manage_thread(action="get_job")` (jamais `read_thread` complet). Commit atelier uniquement si `--commit` demandé, sans `git push`.
 
-### 5. `/gravity-architect spec <slug>` · `handoff <projet> <slug>` · `archive <slug>`
-- **`spec <slug>` :** challenger le besoin, vérifier les solutions natives/existantes avant d'ajouter du code, puis créer `specs/<YYYY-MM-DD>-<slug>.md` depuis `specs/_TEMPLATE.md`.
-- **`handoff <projet> <slug>` :** créer `handoffs/<YYYY-MM-DD>-<projet>-<slug>.md` depuis `handoffs/_TEMPLATE.md` (décisions figées, périmètre, invariants de `tracking/projects/<projet>.md`, vérifications).
-- **`archive <slug>` :** déplacer spec et handoffs livrés vers `specs/archive/` et `handoffs/archive/` (statut `done`), actualiser les pistes actives puis exécuter `--offline --ack-editorial --print-delta`.
+### 5. `spec <slug>` · `handoff <projet> <slug>` · `archive <slug>`
+- **`spec <slug>` :** challenger le besoin, vérifier l'existant, créer `specs/<YYYY-MM-DD>-<slug>.md` depuis `specs/_TEMPLATE.md`.
+- **`handoff <projet> <slug>` & Bridge :** créer `handoffs/<YYYY-MM-DD>-<projet>-<slug>.md` depuis `handoffs/_TEMPLATE.md` (décisions figées, périmètre, invariants `tracking/projects/<projet>.md`, vérifications). Afficher le statut *(« rédigé, non déployé »)* et proposer `/gravity-bridge`. Si l'utilisateur demande d'envoyer/dispatcher des handoffs (même sans `/gravity-bridge`), déclencher **1 seul `ask_question` récapitulatif** (cibles, objets, `file_refs`, posture) valant activation Bridge + feu vert unique `approved=true, dispatch=true` (0 appel MCP silencieux, 0 double confirmation).
+- **`archive <slug>` :** déplacer vers `specs/archive/` et `handoffs/archive/` (`done`), actualiser pistes actives puis `--offline --ack-editorial --print-delta`.
 
-### 6. `/gravity-architect audit [projet|all]` *(audit Code & Architecture)*
-- Auditer en **lecture seule absolue** les dépôts suivis (`projet` ou `all` par défaut) uniquement sur **Code & Architecture** *(jamais d'audit agent ni de métriques)*.
-- Rédiger `audits/code/<YYYY-MM-DD>-audit-code-<cible>.md` depuis `audits/code/_TEMPLATE.md` avec constats `CODE-XX-N` (`P0`/`P1`/`P2`) et plan d'actions priorisé.
-- Mettre à jour le **Journal des audits** dans `audits/code/README.md` *(isolé d'`audits/agents/`)*.
+### 6. `/gravity-architect audit [projet|all]` *(Code & Architecture)*
+- Auditer en **lecture seule absolue** les dépôts suivis uniquement sur **Code & Architecture** *(jamais d'audit agent ni métriques)* ; rédiger `audits/code/<YYYY-MM-DD>-audit-code-<cible>.md` (`CODE-XX-N` `P0`/`P1`/`P2`) et mettre à jour `audits/code/README.md` *(isolé d'`audits/agents/`)*.
