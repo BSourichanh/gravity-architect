@@ -1658,6 +1658,78 @@ class TestSyncTracking(unittest.TestCase):
             self.assertEqual(data["ateliers"][0]["workspace_path"], str(ws.resolve()))
             self.assertEqual(data["ateliers"][0]["workspace_name"], "Atelier Sync")
 
+    def test_int07_collect_atelier_hygiene_alerts_and_run_sync(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            ws = Path(tmp) / "atelier-int07"
+            (ws / "specs").mkdir(parents=True)
+            (ws / "tasks").mkdir(parents=True)
+            (ws / "audits" / "code").mkdir(parents=True)
+            (ws / "tracking" / "projects").mkdir(parents=True)
+            (ws / "tracking" / "antigravity").mkdir(parents=True)
+            (ws / "tracking" / "snapshots").mkdir(parents=True)
+            (ws / "archives").mkdir(parents=True)
+            (ws / "archives" / "README.md").write_text("# Archives\n", encoding="utf-8")
+            (ws / "tracking" / "snapshots" / "ecosystem_snapshot.md").write_text("# Snap\n", encoding="utf-8")
+
+            tpl_dir = PLUGIN_ROOT / "templates"
+            # CRLF seul sur un _TEMPLATE.md ne doit pas déclencher de dérive (comparaison LF normalisée)
+            spec_lf = (tpl_dir / "spec-template.md").read_text(encoding="utf-8").replace("\r\n", "\n")
+            (ws / "specs" / "_TEMPLATE.md").write_bytes(spec_lf.replace("\n", "\r\n").encode("utf-8"))
+            # Dérive réelle sur tasks/_TEMPLATE.md
+            (ws / "tasks" / "_TEMPLATE.md").write_text("# Modifié\n", encoding="utf-8")
+
+            # _TEMPLATE.md dans tracking/projects/ doit être ignoré pour le contrôle de liens
+            (ws / "tracking" / "projects" / "_TEMPLATE.md").write_text(
+                (tpl_dir / "project-card-template.md").read_text(encoding="utf-8"),
+                encoding="utf-8",
+            )
+            # Liens dans blocs ``` et code inline ignorés ; lien cassé et file: signalés
+            (ws / "AGENTS.md").write_text(
+                "# Agents\n"
+                "```markdown\n[ignored](does/not/exist.md)\n```\n"
+                "Inline `[also-ignored](nope.md)` et [valid](ECOSYSTEM.md).\n",
+                encoding="utf-8",
+            )
+            (ws / "ECOSYSTEM.md").write_text(
+                "# Eco\n"
+                "<!-- AUTO:START:ecosystem-meta -->\n<!-- AUTO:END:ecosystem-meta -->\n"
+                "<!-- AUTO:START:ecosystem-projects -->\n<!-- AUTO:END:ecosystem-projects -->\n"
+                "<!-- AUTO:START:ecosystem-watches -->\n<!-- AUTO:END:ecosystem-watches -->\n"
+                "<!-- AUTO:START:ecosystem-artifacts -->\n<!-- AUTO:END:ecosystem-artifacts -->\n"
+                "<!-- AUTO:START:ecosystem-hygiene -->\n<!-- AUTO:END:ecosystem-hygiene -->\n"
+                "- [Cassé](missing/target.md)\n"
+                "- [Interdit](file:///etc/passwd)\n",
+                encoding="utf-8",
+            )
+            (ws / "audits" / "code" / "README.md").write_text(
+                "# Audits\n- [Rapport manquant](2026-01-01-missing.md)\n",
+                encoding="utf-8",
+            )
+
+            alerts = sync_tracking.collect_atelier_hygiene_alerts(ws, templates_dir=tpl_dir)
+            joined = "\n".join(alerts)
+            self.assertNotIn("specs/_TEMPLATE.md", joined)
+            self.assertIn("tasks/_TEMPLATE.md", joined)
+            self.assertNotIn("does/not/exist.md", joined)
+            self.assertNotIn("nope.md", joined)
+            self.assertNotIn("<id>-CHANGELOG.md", joined)
+            self.assertIn("missing/target.md", joined)
+            self.assertIn("file:///etc/passwd", joined)
+            self.assertIn("2026-01-01-missing.md", joined)
+
+            # Dépassement budget AGENTS.md + intégration non bloquante dans run_sync
+            (ws / "AGENTS.md").write_text("# Agents\n" + ("x" * 2600), encoding="utf-8")
+            cfg_path = ws / "projects.json"
+            cfg_path.write_text(
+                json.dumps({"schema_version": 5, "workspace_name": "INT07", "projects": [], "watches": []}),
+                encoding="utf-8",
+            )
+            _, delta = sync_tracking.run_sync(config_path=cfg_path, concept_root=ws, offline=True)
+            d_joined = "\n".join(delta["hygiene_alerts"])
+            self.assertIn("AGENTS.md", d_joined)
+            self.assertIn("tasks/_TEMPLATE.md", d_joined)
+            self.assertIn("missing/target.md", d_joined)
+
 
 if __name__ == "__main__":
     unittest.main()

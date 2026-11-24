@@ -5,42 +5,32 @@ from __future__ import annotations
 import difflib
 import json
 from pathlib import Path
+import re
 
 from core.io_utils import (
-    DEFAULT_HOT_BUDGETS,
-    SCHEMA_VERSION,
-    collect_path_replacements,
-    compare_cli_versions,
-    editorial_prose_sha256,
-    has_install_audit,
-    resolve_public_mode,
-    sanitize_markdown_paths,
-    snapshot_watches_map,
-    strip_volatile_json,
-    visible_orphan_plugin_dirs,
+    DEFAULT_HOT_BUDGETS, SCHEMA_VERSION, collect_path_replacements, compare_cli_versions,
+    editorial_prose_sha256, has_install_audit, resolve_public_mode, sanitize_markdown_paths,
+    snapshot_watches_map, strip_volatile_json, visible_orphan_plugin_dirs,
+)
+
+_MD_LINK_RE = re.compile(r"\[[^\]]*\]\(([^)\n]+)\)")
+_MD_FENCE_RE = re.compile(r"^\s*(`{3,}|~{3,})")
+_INLINE_CODE_RE = re.compile(r"(`+)([^`\n]*?)\1")
+_IGNORED_LINK_PREFIXES = ("#", "http://", "https://", "mailto:", "customization://")
+_TEMPLATE_DRIFT_PAIRS: tuple[tuple[str, str], ...] = (
+    ("specs/_TEMPLATE.md", "spec-template.md"),
+    ("tasks/_TEMPLATE.md", "task-template.md"),
+    ("audits/code/_TEMPLATE.md", "audit-code-template.md"),
+    ("tracking/projects/_TEMPLATE.md", "project-card-template.md"),
 )
 
 
-def compute_unified_diff(
-    old_lines: list[str],
-    new_lines: list[str],
-    project_id: str,
-    max_lines: int = 35,
-) -> list[str]:
+def compute_unified_diff(old_lines: list[str], new_lines: list[str], project_id: str, max_lines: int = 35) -> list[str]:
     """Calcule un diff unifié compact sur `AGENTS.md`."""
-    diff = list(
-        difflib.unified_diff(
-            old_lines,
-            new_lines,
-            fromfile=f"a/{project_id}/AGENTS.md",
-            tofile=f"b/{project_id}/AGENTS.md",
-            lineterm="",
-            n=2,
-        )
-    )
-    if len(diff) > max_lines:
-        return diff[:max_lines] + ["... (diff AGENTS.md tronqué)"]
-    return diff
+    diff = list(difflib.unified_diff(
+        old_lines, new_lines, fromfile=f"a/{project_id}/AGENTS.md", tofile=f"b/{project_id}/AGENTS.md", lineterm="", n=2,
+    ))
+    return diff[:max_lines] + ["... (diff AGENTS.md tronqué)"] if len(diff) > max_lines else diff
 
 
 def build_acked_project_entry(proj: dict) -> dict:
@@ -177,35 +167,24 @@ def collect_project_hygiene_alerts(proj: dict, curr_branch: str | None) -> list[
 
 
 def _compute_single_project_delta(
-    proj: dict,
-    prev_snap: dict | None,
-    prev_base: dict | None,
-    pending_entry: dict | None,
-    concept_root: Path,
-    ack_editorial: bool,
+    proj: dict, prev_snap: dict | None, prev_base: dict | None,
+    pending_entry: dict | None, concept_root: Path, ack_editorial: bool,
 ) -> tuple[dict, str | None, dict | None, dict | None]:
-    pid = proj["id"]
-    stable = proj["stable"]
-    wip = proj["wip"]
+    pid, stable, wip = proj["id"], proj["stable"], proj["wip"]
     branches = stable.get("branches") or {}
     comp = stable.get("compliance") or {"ok": True, "issues": []}
     card_rel = f"tracking/projects/{pid}.md"
     missing_card = proj["exists"] and not (concept_root / card_rel).is_file()
 
-    curr_tags = list(stable.get("tags") or [])
-    curr_ver = stable.get("version")
+    curr_tags, curr_ver = list(stable.get("tags") or []), stable.get("version")
     curr_main_tag = branches.get("main_latest_tag") or branches.get("main_tag")
     curr_main_ver = branches.get("main_plugin_version")
-    curr_head = wip.get("head")
-    curr_branch = wip.get("branch")
-    curr_chg_sha = stable.get("changelog_sha256")
-    curr_agents_sha = stable.get("agents_md_sha256")
+    curr_head, curr_branch = wip.get("head"), wip.get("branch")
+    curr_chg_sha, curr_agents_sha = stable.get("changelog_sha256"), stable.get("agents_md_sha256")
     curr_wip_pairs = sorted((f["status"], f["path"]) for f in wip.get("files") or [])
 
     if prev_snap is None:
-        head_changed = bool(curr_head)
-        branch_changed = False
-        wip_changed = bool(wip.get("code_wip_count", 0) > 0)
+        head_changed, branch_changed, wip_changed = bool(curr_head), False, bool(wip.get("code_wip_count", 0) > 0)
     else:
         prev_wip = prev_snap.get("wip") or {}
         head_changed = curr_head != prev_wip.get("head")
@@ -213,30 +192,23 @@ def _compute_single_project_delta(
         wip_changed = curr_wip_pairs != sorted((f["status"], f["path"]) for f in prev_wip.get("files") or [])
 
     curr_prose_sha = editorial_prose_sha256(concept_root / card_rel)
-    auto_acked_prose = bool(
-        pending_entry is not None and curr_prose_sha != pending_entry.get("prose_sha256_at_trigger")
-    )
+    auto_acked_prose = bool(pending_entry is not None and curr_prose_sha != pending_entry.get("prose_sha256_at_trigger"))
     is_acked = ack_editorial or auto_acked_prose
 
     if is_acked:
         new_tags, manifest_changed, main_tag_changed, main_manifest_changed = [], False, False, False
         changelog_changed, agents_changed, agents_diff, missing_card_flag = False, False, [], False
     elif prev_base is None:
-        new_tags = curr_tags
-        manifest_changed = bool(curr_ver)
-        main_tag_changed = False
-        main_manifest_changed = False
-        changelog_changed = bool(curr_chg_sha)
-        agents_changed = bool(curr_agents_sha)
-        agents_diff = []
+        new_tags, manifest_changed = curr_tags, bool(curr_ver)
+        main_tag_changed, main_manifest_changed = False, False
+        changelog_changed, agents_changed, agents_diff = bool(curr_chg_sha), bool(curr_agents_sha), []
         missing_card_flag = missing_card
     else:
         prev_tags = set(prev_base.get("tags") or [])
         new_tags = [t for t in curr_tags if t not in prev_tags]
         manifest_changed = curr_ver != prev_base.get("plugin_version")
-        prev_main_tag = prev_base.get("main_tag")
+        prev_main_tag, prev_main_ver = prev_base.get("main_tag"), prev_base.get("main_plugin_version")
         main_tag_changed = bool(prev_main_tag is not None and curr_main_tag != prev_main_tag)
-        prev_main_ver = prev_base.get("main_plugin_version")
         main_manifest_changed = bool(prev_main_ver is not None and curr_main_ver != prev_main_ver)
 
         prev_chg_sha = prev_base.get("changelog_sha256")
@@ -249,8 +221,7 @@ def _compute_single_project_delta(
             agents_changed = curr_agents_sha != prev_agents_sha
             agents_diff = (
                 compute_unified_diff(list(prev_base.get("agents_md_lines") or []), list(stable.get("agents_md_lines") or []), pid)
-                if agents_changed
-                else []
+                if agents_changed else []
             )
         missing_card_flag = missing_card
 
@@ -270,42 +241,23 @@ def _compute_single_project_delta(
         next_base_out = build_acked_project_entry(proj)
 
     delta_entry = {
-        "id": pid,
-        "exists": proj["exists"],
-        "new_tags": new_tags,
-        "manifest_version_changed": manifest_changed,
-        "version": curr_ver,
-        "plugin_version": curr_ver,
-        "installed_version": stable.get("installed_version"),
-        "installed_enabled": stable.get("installed_enabled"),
-        "install_drift": bool(stable.get("install_drift")),
+        "id": pid, "exists": proj["exists"], "new_tags": new_tags, "manifest_version_changed": manifest_changed,
+        "version": curr_ver, "plugin_version": curr_ver, "installed_version": stable.get("installed_version"),
+        "installed_enabled": stable.get("installed_enabled"), "install_drift": bool(stable.get("install_drift")),
         "install_content_drift": bool(stable.get("install_content_drift")),
         "install_content_diff_files": list(stable.get("install_content_diff_files") or []),
-        "head_changed": head_changed,
-        "branch_changed": branch_changed,
-        "changelog_changed": changelog_changed,
+        "head_changed": head_changed, "branch_changed": branch_changed, "changelog_changed": changelog_changed,
         "latest_changelog_excerpt": stable.get("latest_changelog_excerpt", "") if changelog_changed else "",
-        "agents_md_changed": agents_changed,
-        "agents_md_diff": agents_diff,
-        "wip_changed": wip_changed,
-        "code_wip_count": wip.get("code_wip_count", 0),
-        "runtime_only_wip": bool(wip.get("runtime_only_wip")),
-        "branch_drift": bool(branches.get("branch_drift")),
-        "compliance": comp,
-        "missing_project_card": missing_card_flag,
+        "agents_md_changed": agents_changed, "agents_md_diff": agents_diff, "wip_changed": wip_changed,
+        "code_wip_count": wip.get("code_wip_count", 0), "runtime_only_wip": bool(wip.get("runtime_only_wip")),
+        "branch_drift": bool(branches.get("branch_drift")), "compliance": comp, "missing_project_card": missing_card_flag,
     }
     return delta_entry, target_out, pending_out, next_base_out
 
 
 def _compute_single_watch_delta(
-    wid: str,
-    winfo: dict,
-    base_state: dict | None,
-    base_w_surfaces: dict,
-    pending_w: dict | None,
-    concept_root: Path,
-    ack_editorial: bool,
-    env: dict,
+    wid: str, winfo: dict, base_state: dict | None, base_w_surfaces: dict,
+    pending_w: dict | None, concept_root: Path, ack_editorial: bool, env: dict,
 ) -> tuple[dict, dict, str | None, dict | None, bool, str | None]:
     impact_rel = str(winfo.get("impact_file") or "")
     curr_imp_prose = editorial_prose_sha256(concept_root / impact_rel) if impact_rel else None
@@ -326,22 +278,16 @@ def _compute_single_watch_delta(
         else:
             new_releases = [v for v in curr_versions if v not in prev_versions]
 
-        titles = sinfo.get("release_titles") or {}
-        digests = sinfo.get("release_digests") or {}
+        titles, digests = sinfo.get("release_titles") or {}, sinfo.get("release_digests") or {}
         w_surf_deltas[slug] = {
-            "heading": sinfo.get("heading", slug),
-            "latest_version": sinfo.get("latest_version"),
-            "new_releases": [
-                {"version": v, "title": titles.get(v, ""), "digest": digests.get(v, [])}
-                for v in new_releases
-            ],
+            "heading": sinfo.get("heading", slug), "latest_version": sinfo.get("latest_version"),
+            "new_releases": [{"version": v, "title": titles.get(v, ""), "digest": digests.get(v, [])} for v in new_releases],
         }
         if new_releases:
             any_new = True
 
     missing_impact = bool(impact_rel and winfo.get("fetch_status") == "ok" and not (concept_root / impact_rel).is_file())
-    target_out: str | None = None
-    pending_out: dict | None = None
+    target_out, pending_out = None, None
     if impact_rel and not w_acked and (any_new or missing_impact):
         target_out = impact_rel
         trig_w_sha = pending_w["prose_sha256_at_trigger"] if pending_w is not None else curr_imp_prose
@@ -356,42 +302,29 @@ def _compute_single_watch_delta(
     cli_alert: str | None = None
     cli_check = winfo.get("local_cli_check")
     if isinstance(cli_check, dict):
-        cmd_name = str(cli_check.get("cmd") or "agy")
-        surf_slug = str(cli_check.get("surface_slug") or "cli")
+        cmd_name, surf_slug = str(cli_check.get("cmd") or "agy"), str(cli_check.get("surface_slug") or "cli")
         local_cli_ver = env.get("local_agy_version") if cmd_name == "agy" else None
         surf_latest = ((winfo.get("surfaces") or {}).get(surf_slug) or {}).get("latest_version")
         if local_cli_ver and surf_latest and compare_cli_versions(str(local_cli_ver), str(surf_latest)) == "behind":
             cli_alert = f"`{cmd_name}` local (`{local_cli_ver}`) en retrait par rapport à {winfo.get('name', wid)} CLI (`{surf_latest}`)."
 
-    wdelta = {
-        "id": wid,
-        "name": winfo.get("name", wid),
-        "fetch_status": winfo.get("fetch_status"),
-        "surfaces": w_surf_deltas,
-    }
+    wdelta = {"id": wid, "name": winfo.get("name", wid), "fetch_status": winfo.get("fetch_status"), "surfaces": w_surf_deltas}
     return wdelta, next_w_surfaces, target_out, pending_out, auto_acked_w, cli_alert
 
 
 def compute_delta_with_state(
-    prev_snapshot: dict | None,
-    curr_snapshot: dict,
-    concept_root: Path,
-    editorial_state: dict | None = None,
-    ack_editorial: bool = False,
-    public_mode: bool | None = None,
-    replacements: list[tuple[str, str]] | None = None,
+    prev_snapshot: dict | None, curr_snapshot: dict, concept_root: Path,
+    editorial_state: dict | None = None, ack_editorial: bool = False,
+    public_mode: bool | None = None, replacements: list[tuple[str, str]] | None = None,
 ) -> tuple[dict, dict]:
     """Calcule le micro-delta avec persistance de l'état éditorial et auto-acquittement."""
     effective_public = resolve_public_mode(curr_snapshot) if public_mode is None else public_mode
     prev_projects_wip = {
-        str(p["id"]): p
-        for p in (prev_snapshot.get("projects", []) if isinstance(prev_snapshot, dict) else [])
+        str(p["id"]): p for p in (prev_snapshot.get("projects", []) if isinstance(prev_snapshot, dict) else [])
         if isinstance(p, dict) and p.get("id")
     }
-
     base_state = editorial_state if editorial_state is not None else editorial_state_from_snapshot(prev_snapshot)
-    base_projects = (base_state or {}).get("projects") or {}
-    base_watches = (base_state or {}).get("watches") or {}
+    base_projects, base_watches = (base_state or {}).get("projects") or {}, (base_state or {}).get("watches") or {}
     if not base_watches and isinstance((base_state or {}).get("antigravity"), dict):
         base_watches = {"antigravity": base_state["antigravity"]}
     base_pending = (base_state or {}).get("pending_editorial") or {}
@@ -407,12 +340,8 @@ def compute_delta_with_state(
         pid = proj["id"]
         card_rel = f"tracking/projects/{pid}.md"
         p_delta, target_rel, pending_obj, next_base = _compute_single_project_delta(
-            proj,
-            prev_projects_wip.get(pid),
-            base_projects.get(pid),
-            base_pending.get(card_rel),
-            concept_root,
-            ack_editorial,
+            proj, prev_projects_wip.get(pid), base_projects.get(pid),
+            base_pending.get(card_rel), concept_root, ack_editorial,
         )
         project_deltas[pid] = p_delta
         if target_rel and target_rel not in editorial_targets:
@@ -424,22 +353,12 @@ def compute_delta_with_state(
         if proj["exists"]:
             hygiene_alerts.extend(collect_project_hygiene_alerts(proj, (proj.get("wip") or {}).get("branch")))
 
-    watches_curr = snapshot_watches_map(curr_snapshot)
-    watch_deltas: dict[str, dict] = {}
-    any_watch_auto_acked = False
-    env = curr_snapshot.get("environment") or {}
-
+    watches_curr, watch_deltas, any_watch_auto_acked, env = snapshot_watches_map(curr_snapshot), {}, False, curr_snapshot.get("environment") or {}
     for wid, winfo in watches_curr.items():
         impact_rel = str(winfo.get("impact_file") or "")
         wdelta, next_w_surfaces, w_target, w_pending, auto_ack_w, cli_alert = _compute_single_watch_delta(
-            wid,
-            winfo,
-            base_state,
-            base_watches.get(wid) or {},
-            base_pending.get(impact_rel) if impact_rel else None,
-            concept_root,
-            ack_editorial,
-            env,
+            wid, winfo, base_state, base_watches.get(wid) or {},
+            base_pending.get(impact_rel) if impact_rel else None, concept_root, ack_editorial, env,
         )
         if auto_ack_w:
             any_watch_auto_acked = True
@@ -507,30 +426,19 @@ def compute_delta_with_state(
 
 
 def compute_delta(
-    prev_snapshot: dict | None,
-    curr_snapshot: dict,
-    concept_root: Path,
-    editorial_state: dict | None = None,
-    ack_editorial: bool = False,
-    public_mode: bool | None = None,
+    prev_snapshot: dict | None, curr_snapshot: dict, concept_root: Path,
+    editorial_state: dict | None = None, ack_editorial: bool = False, public_mode: bool | None = None,
 ) -> dict:
     """Calcule le micro-delta entre le snapshot précédent et le snapshot courant."""
     delta, _ = compute_delta_with_state(
-        prev_snapshot=prev_snapshot,
-        curr_snapshot=curr_snapshot,
-        concept_root=concept_root,
-        editorial_state=editorial_state,
-        ack_editorial=ack_editorial,
-        public_mode=public_mode,
+        prev_snapshot=prev_snapshot, curr_snapshot=curr_snapshot, concept_root=concept_root,
+        editorial_state=editorial_state, ack_editorial=ack_editorial, public_mode=public_mode,
     )
     return delta
 
 
 def evaluate_hot_budgets(
-    concept_root: Path,
-    budgets_cfg: dict | None,
-    project_ids: list[str],
-    watch_impact_files: list[str] | None = None,
+    concept_root: Path, budgets_cfg: dict | None, project_ids: list[str], watch_impact_files: list[str] | None = None,
 ) -> dict[str, dict]:
     """Vérifie que les fichiers Hot ne dépassent pas leur budget en octets."""
     merged = dict(DEFAULT_HOT_BUDGETS)
@@ -548,8 +456,7 @@ def evaluate_hot_budgets(
     for rel_path in static_files:
         fpath = concept_root / rel_path
         if fpath.is_file():
-            size = fpath.stat().st_size
-            limit = int(merged.get(rel_path, 6000))
+            size, limit = fpath.stat().st_size, int(merged.get(rel_path, 6000))
             report[rel_path] = {"bytes": size, "budget": limit, "over_budget": size > limit}
 
     card_limit = int(merged.get("project_card_max_bytes", 3500))
@@ -566,8 +473,7 @@ def append_budget_alerts(delta: dict, hot_budgets: dict[str, dict]) -> None:
     """Met à jour les alertes d'hygiène pour tout fichier Hot dépassant son budget en octets."""
     budget_prefixes = tuple(f"`{rel_path}` :" for rel_path in hot_budgets)
     cleaned = [
-        alert
-        for alert in (delta.get("hygiene_alerts") or [])
+        alert for alert in (delta.get("hygiene_alerts") or [])
         if not (alert.startswith(budget_prefixes) and "> budget " in alert)
     ]
     for rel_path, info in sorted(hot_budgets.items()):
@@ -576,15 +482,105 @@ def append_budget_alerts(delta: dict, hot_budgets: dict[str, dict]) -> None:
     delta["hygiene_alerts"] = cleaned
 
 
-def stabilize_unchanged_timestamps(
-    prev_snapshot: dict | None,
-    full_snapshot: dict,
-    prev_editorial_state: dict | None,
-    next_editorial_state: dict,
-    prev_delta: dict | None,
-    delta: dict,
+def extract_markdown_targets(md_text: str) -> list[str]:
+    """Extrait les cibles de liens Markdown en ignorant blocs ```/~~~ et code inline."""
+    targets: list[str] = []
+    in_fence, fence_char, fence_len = False, "", 0
+    for line in md_text.splitlines():
+        if fence_match := _MD_FENCE_RE.match(line):
+            marker = fence_match.group(1)
+            if not in_fence:
+                in_fence, fence_char, fence_len = True, marker[0], len(marker)
+                continue
+            if marker[0] == fence_char and len(marker) >= fence_len and line.strip() == marker:
+                in_fence, fence_char, fence_len = False, "", 0
+                continue
+        if in_fence:
+            continue
+        for match in _MD_LINK_RE.finditer(_INLINE_CODE_RE.sub("", line)):
+            raw_target = match.group(1).strip()
+            if not raw_target:
+                continue
+            target = raw_target[1:raw_target.index(">")].strip() if (raw_target.startswith("<") and ">" in raw_target) else raw_target.split()[0]
+            if target:
+                targets.append(target)
+    return targets
+
+
+def _iter_atelier_hygiene_files(concept_root: Path) -> list[Path]:
+    files: list[Path] = []
+    for name in ("AGENTS.md", "ECOSYSTEM.md"):
+        cand = concept_root / name
+        if cand.is_file():
+            files.append(cand)
+    proj_dir = concept_root / "tracking" / "projects"
+    if proj_dir.is_dir():
+        files.extend(p for p in sorted(proj_dir.glob("*.md"), key=lambda x: x.name) if p.is_file() and not p.name.startswith("_"))
+    tracking_dir = concept_root / "tracking"
+    if tracking_dir.is_dir():
+        files.extend(p for p in sorted(tracking_dir.glob("*/IMPACT.md"), key=lambda x: str(x)) if p.is_file())
+    audits_dir = concept_root / "audits"
+    if audits_dir.is_dir():
+        files.extend(p for p in sorted(audits_dir.glob("*/README.md"), key=lambda x: str(x)) if p.is_file())
+    return files
+
+
+def collect_atelier_hygiene_alerts(
+    concept_root: Path,
+    templates_dir: Path | None = None,
+    hot_budgets: dict[str, dict] | None = None,
     *,
-    ack_editorial: bool,
+    ignore_missing_targets: set[str] | None = None,
+) -> list[str]:
+    """Détecte dérive `_TEMPLATE.md`, liens cassés/`file:` (Hot + `audits/*/README.md`) et dépassements budgets."""
+    alerts: list[str] = []
+    root_resolved = concept_root.resolve()
+    tpl_dir = templates_dir if templates_dir is not None else (Path(__file__).resolve().parent.parent / "templates")
+
+    for ws_rel, tpl_name in _TEMPLATE_DRIFT_PAIRS:
+        ws_file, tpl_file = concept_root / ws_rel, tpl_dir / tpl_name
+        if ws_file.is_file() and tpl_file.is_file():
+            ws_txt = ws_file.read_text(encoding="utf-8", errors="replace").replace("\r\n", "\n")
+            tpl_txt = tpl_file.read_text(encoding="utf-8", errors="replace").replace("\r\n", "\n")
+            if ws_txt != tpl_txt:
+                alerts.append(f"`{ws_rel}` : dérive détectée par rapport au modèle `{tpl_name}`.")
+
+    ignored = set(ignore_missing_targets or ())
+    for md_path in _iter_atelier_hygiene_files(concept_root):
+        rel_doc = md_path.relative_to(concept_root).as_posix()
+        text = md_path.read_text(encoding="utf-8", errors="replace")
+        for target in extract_markdown_targets(text):
+            low = target.lower()
+            if low.startswith("file:"):
+                alerts.append(f"`{rel_doc}` : lien `file:` interdit (`{target}`).")
+                continue
+            if low.startswith(_IGNORED_LINK_PREFIXES):
+                continue
+            rel_part = target.split("#", 1)[0].split("?", 1)[0]
+            if not rel_part:
+                continue
+            resolved = (md_path.parent / rel_part).resolve()
+            try:
+                rel_target = resolved.relative_to(root_resolved).as_posix()
+            except ValueError:
+                rel_target = ""
+            if rel_target in ignored:
+                continue
+            if not resolved.exists():
+                alerts.append(f"`{rel_doc}` : lien relatif cassé (`{target}`).")
+
+    budgets = evaluate_hot_budgets(concept_root, None, []) if hot_budgets is None else hot_budgets
+    for rel_path, info in sorted(budgets.items()):
+        if isinstance(info, dict) and info.get("over_budget"):
+            msg = f"`{rel_path}` : {info['bytes']} o > budget {info['budget']} o."
+            if msg not in alerts:
+                alerts.append(msg)
+    return alerts
+
+
+def stabilize_unchanged_timestamps(
+    prev_snapshot: dict | None, full_snapshot: dict, prev_editorial_state: dict | None,
+    next_editorial_state: dict, prev_delta: dict | None, delta: dict, *, ack_editorial: bool,
 ) -> None:
     """Préserve les horodatages précédents lorsque rien n'a changé (0 churn disque)."""
     if prev_snapshot is None or ack_editorial:
@@ -592,10 +588,7 @@ def stabilize_unchanged_timestamps(
     prev_no_budgets = {k: v for k, v in prev_snapshot.items() if k != "hot_budgets"}
     curr_no_budgets = {k: v for k, v in full_snapshot.items() if k != "hot_budgets"}
     same_snapshot = strip_volatile_json(prev_no_budgets) == strip_volatile_json(curr_no_budgets)
-    same_state = (
-        prev_editorial_state is not None
-        and strip_volatile_json(prev_editorial_state) == strip_volatile_json(next_editorial_state)
-    )
+    same_state = prev_editorial_state is not None and strip_volatile_json(prev_editorial_state) == strip_volatile_json(next_editorial_state)
     same_delta_core = (
         isinstance(prev_delta, dict)
         and prev_delta.get("hygiene_alerts") == delta.get("hygiene_alerts")

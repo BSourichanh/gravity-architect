@@ -20,12 +20,24 @@ PLUGIN_SOURCE = REPO_ROOT / "plugin"
 PLUGIN_NAME = "gravity-architect"
 
 EXEC_SCRIPTS: Tuple[str, ...] = (
+    "hooks/pre_invocation_architect.py",
     "scripts/sync_tracking.py",
     "scripts/init_workspace.py",
+    "scripts/atelier_status.py",
     "scripts/validate.py",
 )
 
 COPY_IGNORE = shutil.ignore_patterns("__pycache__", "*.pyc", "*.pyo", ".DS_Store")
+
+
+def has_real_python3() -> bool:
+    """Return True if a real 'python3' binary exists on PATH (ignoring WindowsApps stub)."""
+    found = shutil.which("python3")
+    if not found:
+        return False
+    if os.name == "nt" and "windowsapps" in found.lower():
+        return False
+    return True
 
 
 def read_plugin_manifest(plugin_dir: Path) -> Optional[Dict[str, Any]]:
@@ -136,6 +148,15 @@ def run_plugin_validation(plugin_dir: Path) -> subprocess.CompletedProcess:
     )
 
 
+def run_fix_python_cmd(plugin_dir: Path) -> subprocess.CompletedProcess:
+    """Adapt 'python3' references to 'python' or 'py -3' on Windows copies."""
+    validator = plugin_dir / "scripts" / "validate.py"
+    return _run_subprocess(
+        [sys.executable, "-B", str(validator), "--plugin-root", str(plugin_dir), "--fix-python-cmd"],
+        dont_write_bytecode=True,
+    )
+
+
 def print_next_steps(target_dir: Optional[Path]) -> None:
     print("\nNext steps:")
     if target_dir is not None:
@@ -220,6 +241,7 @@ def install_copy(
     target_dir: Path,
     *,
     force: bool = False,
+    no_fix_python: bool = False,
     skip_validate: bool = False,
     dry_run: bool = False,
 ) -> int:
@@ -256,10 +278,14 @@ def install_copy(
                 return 1
             replacing = True
 
+    will_fix_py = os.name == "nt" and not no_fix_python and not has_real_python3()
+
     if dry_run:
         action = "Upgrade/reinstall" if replacing else "Install"
         print(f"[DRY-RUN] {action} plugin from {plugin_src} -> {target_dir}")
         print("[DRY-RUN] Set POSIX executable bits (0755) on scripts when on Linux/macOS")
+        if will_fix_py:
+            print("[DRY-RUN] Run validate.py --fix-python-cmd on staged copy (Windows)")
         if not skip_validate:
             print("[DRY-RUN] Run validate.py --strict on staged copy before committing")
         return 0
@@ -272,6 +298,14 @@ def install_copy(
     try:
         shutil.copytree(plugin_src, staged_dir, ignore=COPY_IGNORE)
         ensure_posix_exec_bits(staged_dir)
+
+        if will_fix_py:
+            fix_proc = run_fix_python_cmd(staged_dir)
+            if fix_proc.returncode != 0:
+                print("[ERROR] Failed to adapt python3 commands on staged copy.", file=sys.stderr)
+                _print_process_output(fix_proc)
+                return 1
+            print("[OK]    Adapted 'python3' references on installed copy for Windows.")
 
         if not skip_validate:
             val_proc = run_plugin_validation(staged_dir)
@@ -350,6 +384,12 @@ def install_agy(plugin_src: Path, *, dry_run: bool = False) -> int:
         return 1
 
     print("[OK]    Installed Gravity Architect via 'agy plugin install'.")
+    if os.name == "nt" and not has_real_python3():
+        print(
+            "[NOTE]  Windows without real 'python3' detected: if hooks fail, run\n"
+            "        'python plugin/scripts/validate.py --plugin-root <installed-dir> --fix-python-cmd'\n"
+            "        against your installed copy."
+        )
     return 0
 
 
@@ -457,7 +497,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--no-fix-python",
         action="store_true",
-        help="CLI parity no-op flag (gravity-architect exposes no executable manifest to rewrite on Windows).",
+        help="Skip automatic Windows 'python3' -> 'python'/'py -3' adaptation on the installed copy.",
     )
     parser.add_argument(
         "--dry-run",
@@ -545,6 +585,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             PLUGIN_SOURCE,
             target_dir,
             force=args.force,
+            no_fix_python=args.no_fix_python,
             skip_validate=effective_skip_validate,
             dry_run=args.dry_run,
         )

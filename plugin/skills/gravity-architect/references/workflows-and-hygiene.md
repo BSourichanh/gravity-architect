@@ -66,3 +66,13 @@ Respecter strictement ces 4 étapes en fin de cycle :
 - **Options & nommage :** `--name` reste facultatif (sinon nom dérivé automatiquement du dossier courant hors noms génériques vers `Mon Atelier Projets`), `public_mode=false` par défaut ; `public_mode` et `--watch-url` restent des options avancées.
 - **Initialisation rapide à `0` projet :** exécuter en 1 commande `python "<PLUGIN_DIR>/scripts/init_workspace.py" --workspace . --run-sync --offline` (0 passe `--ack-editorial` requise).
 - **Prochaines commandes à proposer :** `/gravity-architect add <chemin>` (suivre un dépôt existant) et `/gravity-architect spec <slug>` (démarrer une spécification).
+
+## 6. Cycle 4 phases, checkpoint hybride & Bridge `batch_id`
+
+### `/gravity-architect` vide vs `<instruction>`
+- **`/gravity-architect` sans argument :** intercepté par le hook `PreInvocation` (`hooks/pre_invocation_architect.py` → `scripts/atelier_status.py`) en lecture seule stricte (`0` écriture disque, `0` écriture `ateliers.json`, `0` capture `gravity-metrics`). Affiche specs actives, tasks par vague/statut, état Bridge (`?mode=ro`), alertes hygiène (`INT-07`) et actions suggérées (`reprendre`, `/gravity-architect <instruction>`, `/gravity-architect sync` ou `init`).
+- **`/gravity-architect "<instruction>"` :** orchestre un cycle structuré en **4 phases** :
+  1. **Conception :** délégation `research` lecture seule → challenge `/grill-me` → cadrage `/plan` et rédaction `specs/<YYYY-MM-DD>-<slug>.md`.
+  2. **Planification :** ancrage exact des symboles et plages de lignes issus de `research` (`::` / `~L`) → découpage `tasks/<YYYY-MM-DD>-<projet>-<slug>.md` → contrôle `core/waves.py --check-waves` → **1 checkpoint unique** présenté via artefact (`RequestFeedback=True`) **et/ou `ask_question` explicite** *(bouton `Proceed` absent sur certaines surfaces Antigravity)*.
+  3. **Production :** dispatch Bridge avec `batch_id` partagé (statut initial `rédigé, non déployé`, suivi par `manage_thread(action="get_job")`) et mini-checkpoint sur `dev` entre vagues.
+  4. **Validation :** exécution de `verify_commands` (`100 %` vertes, *fail-closed* global) → `git add`/`commit`/`push origin dev` *(jamais `--force`)* → archivage (`specs/archive/`, `tasks/archive/`, `--offline --ack-editorial`) → mise à jour des docs écosystème → réinstallation en fin de Validation uniquement (`ecosystem_install.py --update --modules <...> --strict`) → récapitulatif final → clôture optionnelle `gravity-metrics` (§3).

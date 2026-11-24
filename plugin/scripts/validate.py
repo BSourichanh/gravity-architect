@@ -9,9 +9,11 @@ import json
 import os
 from pathlib import Path
 import re
+import shutil
 import subprocess
 import sys
 import tempfile
+from typing import Any
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 PLUGIN_ROOT_DEFAULT = SCRIPT_DIR.parent
@@ -31,8 +33,12 @@ OFFICIAL_PLUGIN_FIELDS = {
 ALLOWED_LOCAL_MODULES = {
     "sync_tracking",
     "init_workspace",
+    "atelier_status",
     "validate",
     "core",
+    "hooks",
+    "scripts",
+    "pre_invocation_architect",
     "io_utils",
     "discovery",
     "git_collector",
@@ -41,6 +47,14 @@ ALLOWED_LOCAL_MODULES = {
     "renderers",
     "waves",
 }
+FLAT_HOOK_EVENTS = ("SessionStart", "PreInvocation", "PostInvocation", "Stop")
+GROUPED_HOOK_EVENTS = ("PreToolUse", "PostToolUse")
+SEMVER_RE = re.compile(r"^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$")
+SUGGESTED_PROMPT_MAX_CHARS = 100
+MD_LINK_RE = re.compile(r"\[[^\]]*\]\(([^)\n]+)\)")
+MD_FENCE_RE = re.compile(r"^\s*(`{3,}|~{3,})")
+INLINE_CODE_RE = re.compile(r"(`+)([^`\n]*?)\1")
+IGNORED_LINK_PREFIXES = ("#", "http://", "https://", "mailto:", "customization://")
 MODULE_CONTRACT_FIELDS = {
     "schema_version",
     "id",
@@ -117,6 +131,81 @@ def _configure_stdio() -> None:
                 pass
 
 
+def has_real_python3() -> bool:
+    """Retourne True si un binaire 'python3' réel existe sur PATH (hors stub WindowsApps)."""
+    found = shutil.which("python3")
+    if not found:
+        return False
+    if os.name == "nt" and "windowsapps" in found.lower():
+        return False
+    return True
+
+
+def _detect_portable_python_cmd() -> str:
+    py_bin = shutil.which("python")
+    if py_bin and not (os.name == "nt" and "windowsapps" in py_bin.lower()):
+        return "python"
+    if shutil.which("py"):
+        return "py -3"
+    return "python"
+
+
+def _rewrite_python3_cmd(cmd: str, replacement: str) -> str:
+    if cmd == "python3":
+        return replacement
+    if cmd.startswith("python3 "):
+        return f"{replacement} {cmd[len('python3 '):]}"
+    return cmd
+
+
+def fix_python_cmd(plugin_root: Path) -> int:
+    """Adapte 'python3' en 'python' ou 'py -3' dans hooks.json sur une copie Windows."""
+    if has_real_python3():
+        print("[INFO]  Exécutable 'python3' réel détecté : aucune adaptation nécessaire.")
+        return 0
+
+    hooks_json = plugin_root / "hooks.json"
+    if not hooks_json.is_file():
+        print(f"[INFO]  Aucun fichier hooks.json trouvé dans {plugin_root}.")
+        return 0
+
+    raw = hooks_json.read_bytes()
+    if raw.startswith(b"\xef\xbb\xbf"):
+        raw = raw[3:]
+    hdata = json.loads(raw.decode("utf-8"))
+    py_cmd = _detect_portable_python_cmd()
+    changed = False
+
+    if isinstance(hdata, dict):
+        for group_cfg in hdata.values():
+            if not isinstance(group_cfg, dict):
+                continue
+            for ev in FLAT_HOOK_EVENTS:
+                for h in group_cfg.get(ev) or []:
+                    if isinstance(h, dict) and isinstance(h.get("command"), str):
+                        new_cmd = _rewrite_python3_cmd(h["command"], py_cmd)
+                        if new_cmd != h["command"]:
+                            h["command"] = new_cmd
+                            changed = True
+            for ev in GROUPED_HOOK_EVENTS:
+                for entry in group_cfg.get(ev) or []:
+                    if isinstance(entry, dict):
+                        for h in entry.get("hooks") or []:
+                            if isinstance(h, dict) and isinstance(h.get("command"), str):
+                                new_cmd = _rewrite_python3_cmd(h["command"], py_cmd)
+                                if new_cmd != h["command"]:
+                                    h["command"] = new_cmd
+                                    changed = True
+
+    if changed:
+        with hooks_json.open("w", encoding="utf-8", newline="\n") as fh:
+            fh.write(json.dumps(hdata, indent=2, ensure_ascii=False) + "\n")
+        print(f"[FIXED] {hooks_json} -> '{py_cmd}'")
+    else:
+        print(f"[INFO]  Aucun changement requis dans {plugin_root}.")
+    return 0
+
+
 def _check_stdlib_only(py_file: Path, report: Report) -> None:
     stdlib_names_raw = getattr(sys, "stdlib_module_names", None)
     if not stdlib_names_raw:
@@ -168,15 +257,32 @@ def _validate_manifest(root: Path, report: Report) -> None:
             f"plugin.json : 'name' doit être 'gravity-architect', obtenu {manifest.get('name')!r}."
         )
 
-    missing_req = [
+    missing_req = sorted(
         k for k in OFFICIAL_PLUGIN_FIELDS - {"disabled"} if k not in manifest
-    ]
+    )
     if missing_req:
         report.error(f"plugin.json : champs requis manquants : {missing_req}")
 
-    desc = str(manifest.get("description") or "")
-    if not desc or len(desc) > 160:
-        report.error(f"plugin.json : 'description' vide ou > 160 caractères ({len(desc)}).")
+    if "disabled" in manifest and not isinstance(manifest.get("disabled"), bool):
+        report.error("plugin.json : 'disabled' doit être un booléen.")
+
+    for str_field in ("displayName", "version", "homepage", "repository"):
+        val = manifest.get(str_field)
+        if not isinstance(val, str) or not val.strip():
+            report.error(f"plugin.json : '{str_field}' doit être une chaîne non vide.")
+
+    ver = manifest.get("version")
+    if isinstance(ver, str) and ver.strip() and not SEMVER_RE.match(ver.strip()):
+        report.error(f"plugin.json : 'version' SemVer invalide ({ver!r}).")
+
+    author = manifest.get("author")
+    if not isinstance(author, dict) or not isinstance(author.get("name"), str) or not author["name"].strip():
+        report.error("plugin.json : 'author.name' doit être une chaîne non vide.")
+
+    desc = manifest.get("description")
+    if not isinstance(desc, str) or not desc.strip() or len(desc) > 160:
+        desc_len = len(desc) if isinstance(desc, str) else 0
+        report.error(f"plugin.json : 'description' vide ou > 160 caractères ({desc_len}).")
 
     prompts = manifest.get("suggestedPrompts")
     if (
@@ -185,19 +291,45 @@ def _validate_manifest(root: Path, report: Report) -> None:
         or not all(isinstance(p, str) and p.strip() for p in prompts)
     ):
         report.error("plugin.json : exactement 3 'suggestedPrompts' non vides sont requis.")
+    else:
+        for idx, prompt in enumerate(prompts):
+            if len(prompt) > SUGGESTED_PROMPT_MAX_CHARS:
+                report.error(
+                    f"plugin.json : 'suggestedPrompts[{idx}]' > {SUGGESTED_PROMPT_MAX_CHARS} caractères ({len(prompt)})."
+                )
+            stripped = prompt.lstrip()
+            if not stripped.startswith("/"):
+                report.error(
+                    f"plugin.json : 'suggestedPrompts[{idx}]' doit débuter par '/' et suivre '/cmd — résumé'."
+                )
+                continue
+            sep = " — " if " — " in stripped else (" - " if " - " in stripped else None)
+            if sep is None:
+                report.error(
+                    f"plugin.json : 'suggestedPrompts[{idx}]' doit contenir ' — ' ou ' - ' suivi d'un résumé."
+                )
+            else:
+                cmd_part, summary = stripped.split(sep, 1)
+                if len(cmd_part.strip()) <= 1 or not summary.strip():
+                    report.error(
+                        f"plugin.json : 'suggestedPrompts[{idx}]' doit contenir une commande '/cmd' et un résumé non vide."
+                    )
 
-    logo_rel = str(manifest.get("logo") or "")
-    logo_path = root / logo_rel
-    if not logo_rel or not logo_path.is_file():
-        report.error(f"Logo introuvable : {logo_rel!r}")
-    elif logo_path.suffix.lower() == ".svg":
-        svg = logo_path.read_text(encoding="utf-8", errors="replace")
-        vb = re.search(
-            r"""viewBox\s*=\s*["']0\s+0\s+(\d+(?:\.\d+)?)\s+(\d+(?:\.\d+)?)["']""",
-            svg,
-        )
-        if not vb or float(vb.group(1)) <= 0 or float(vb.group(1)) != float(vb.group(2)):
-            report.error(f"Logo {logo_rel} : viewBox carré 1:1 non détecté.")
+    logo_rel = manifest.get("logo")
+    if not isinstance(logo_rel, str) or not logo_rel.strip():
+        report.error("plugin.json : 'logo' manquant.")
+    else:
+        logo_path = root / logo_rel
+        if not logo_path.is_file():
+            report.error(f"Logo introuvable : {logo_rel!r}")
+        elif logo_path.suffix.lower() == ".svg":
+            svg = logo_path.read_text(encoding="utf-8", errors="replace")
+            vb = re.search(
+                r"""viewBox\s*=\s*["']0\s+0\s+(\d+(?:\.\d+)?)\s+(\d+(?:\.\d+)?)["']""",
+                svg,
+            )
+            if not vb or float(vb.group(1)) <= 0 or float(vb.group(1)) != float(vb.group(2)):
+                report.error(f"Logo {logo_rel} : viewBox carré 1:1 non détecté.")
 
 
 def _validate_module_contract(root: Path, report: Report) -> None:
@@ -510,14 +642,166 @@ def _run_e2e_dry_run(root: Path, report: Report) -> None:
             report.error("Dry-run sync_tracking.py --check a modifié ateliers.json.")
 
 
+def _validate_hook_item(root: Path, label: str, item: Any, report: Report) -> None:
+    if not isinstance(item, dict):
+        report.error(f"{label} : entrée hook doit être un objet.")
+        return
+    htype, cmd = item.get("type"), item.get("command")
+    if not isinstance(htype, str) or not htype.strip():
+        report.error(f"{label} : 'type' manquant ou invalide.")
+    if not isinstance(cmd, str) or not cmd.strip():
+        report.error(f"{label} : 'command' manquant ou invalide.")
+        return
+    for py_rel in re.findall(r"[^\s\"']+\.py\b", cmd):
+        target_py = (root / py_rel).resolve()
+        if not target_py.is_relative_to(root.resolve()) or not target_py.is_file():
+            report.error(f"{label} : script introuvable {py_rel!r}")
+
+
+def _validate_hooks(root: Path, report: Report) -> None:
+    hooks_json = root / "hooks.json"
+    if not hooks_json.is_file():
+        report.error("hooks.json introuvable à la racine du plugin.")
+        return
+
+    raw_bytes = hooks_json.read_bytes()
+    if raw_bytes.startswith(b"\xef\xbb\xbf"):
+        report.error("hooks.json ne doit pas contenir de BOM UTF-8.")
+        raw_bytes = raw_bytes[3:]
+    if b"\r\n" in raw_bytes:
+        report.error("hooks.json doit utiliser des fins de ligne LF (CRLF détecté).")
+
+    try:
+        hooks_raw = raw_bytes.decode("utf-8")
+        hooks_data = json.loads(hooks_raw)
+    except Exception as exc:
+        report.error(f"hooks.json invalide : {exc}")
+        return
+
+    if not isinstance(hooks_data, dict):
+        report.error("hooks.json doit contenir un objet JSON.")
+        return
+
+    allowed_keys = {"enabled", *FLAT_HOOK_EVENTS, *GROUPED_HOOK_EVENTS}
+    for group_name, group_cfg in hooks_data.items():
+        if not isinstance(group_cfg, dict):
+            report.error(f"hooks.json ({group_name}) doit être un objet.")
+            continue
+        unknown = sorted(set(group_cfg.keys()) - allowed_keys)
+        if unknown:
+            report.error(f"hooks.json ({group_name}) : clés inconnues {unknown}")
+        if "enabled" in group_cfg and not isinstance(group_cfg["enabled"], bool):
+            report.error(f"hooks.json ({group_name}) : 'enabled' doit être un booléen.")
+
+        for ev in FLAT_HOOK_EVENTS:
+            if ev not in group_cfg:
+                continue
+            entries = group_cfg[ev]
+            if not isinstance(entries, list):
+                report.error(f"hooks.json ({group_name}.{ev}) doit être une liste.")
+                continue
+            for idx, entry in enumerate(entries):
+                _validate_hook_item(root, f"hooks.json ({group_name}.{ev}[{idx}])", entry, report)
+
+        for ev in GROUPED_HOOK_EVENTS:
+            if ev not in group_cfg:
+                continue
+            entries = group_cfg[ev]
+            if not isinstance(entries, list):
+                report.error(f"hooks.json ({group_name}.{ev}) doit être une liste.")
+                continue
+            for idx, entry in enumerate(entries):
+                if not isinstance(entry, dict) or not isinstance(entry.get("hooks"), list):
+                    report.error(f"hooks.json ({group_name}.{ev}[{idx}]) : 'hooks' doit être une liste.")
+                    continue
+                for hidx, h in enumerate(entry["hooks"]):
+                    _validate_hook_item(root, f"hooks.json ({group_name}.{ev}[{idx}].hooks[{hidx}])", h, report)
+
+    if os.name == "nt" and "python3" in hooks_raw and not has_real_python3():
+        report.info(
+            "hooks.json portable ('python3') détecté sous Windows : adapté automatiquement lors de install.py."
+        )
+
+
+def _extract_markdown_targets(md_text: str) -> list[str]:
+    targets: list[str] = []
+    in_fence, fence_char, fence_len = False, "", 0
+    for line in md_text.splitlines():
+        fence_match = MD_FENCE_RE.match(line)
+        if fence_match:
+            marker = fence_match.group(1)
+            if not in_fence:
+                in_fence, fence_char, fence_len = True, marker[0], len(marker)
+                continue
+            if marker[0] == fence_char and len(marker) >= fence_len and line.strip() == marker:
+                in_fence, fence_char, fence_len = False, "", 0
+                continue
+        if in_fence:
+            continue
+        cleaned = INLINE_CODE_RE.sub("", line)
+        for match in MD_LINK_RE.finditer(cleaned):
+            raw_target = match.group(1).strip()
+            if not raw_target:
+                continue
+            target = (
+                raw_target[1 : raw_target.index(">")].strip()
+                if (raw_target.startswith("<") and ">" in raw_target)
+                else raw_target.split()[0]
+            )
+            if target:
+                targets.append(target)
+    return targets
+
+
+def _check_markdown_file_links(md_path: Path, label: str, report: Report) -> None:
+    try:
+        content = md_path.read_text(encoding="utf-8", errors="replace")
+    except OSError as exc:
+        report.error(f"Impossible de lire {label} : {exc}")
+        return
+    for target in _extract_markdown_targets(content):
+        lower = target.lower()
+        if lower.startswith("file:"):
+            report.error(f"Lien 'file:' interdit dans {label} : {target!r}")
+            continue
+        if lower.startswith(IGNORED_LINK_PREFIXES):
+            continue
+        rel = target.split("#", 1)[0].split("?", 1)[0]
+        if not rel:
+            continue
+        resolved = (md_path.parent / rel).resolve()
+        if not resolved.exists():
+            report.error(f"Lien Markdown relatif cassé dans {label} : {target!r}")
+
+
+def _validate_markdown_links(root: Path, report: Report) -> None:
+    plugin_readme = root / "README.md"
+    if plugin_readme.is_file():
+        _check_markdown_file_links(plugin_readme, "README.md", report)
+    skill_md = root / "skills" / "gravity-architect" / "SKILL.md"
+    if skill_md.is_file():
+        _check_markdown_file_links(skill_md, "skills/gravity-architect/SKILL.md", report)
+    refs_dir = root / "skills" / "gravity-architect" / "references"
+    if refs_dir.is_dir():
+        for ref_md in sorted(refs_dir.glob("*.md")):
+            if ref_md.is_file():
+                _check_markdown_file_links(ref_md, f"skills/gravity-architect/references/{ref_md.name}", report)
+    if root.name == "plugin":
+        repo_readme = root.parent / "README.md"
+        if repo_readme.is_file():
+            _check_markdown_file_links(repo_readme, "../README.md", report)
+
+
 def validate_plugin(root: Path, report: Report) -> None:
-    """Audite la structure, le manifeste, le contrat module, les templates, la stdlib et l'absence de fuites."""
+    """Audite la structure, le manifeste, le contrat module, les hooks, les templates, la stdlib et l'absence de fuites."""
     _validate_manifest(root, report)
     _validate_module_contract(root, report)
+    _validate_hooks(root, report)
     _validate_skills(root, report)
     _validate_rules_and_templates(root, report)
+    _validate_markdown_links(root, report)
 
-    for sub in ("assets", "config", "core", "rules", "scripts", "skills", "templates"):
+    for sub in ("assets", "config", "core", "hooks", "rules", "scripts", "skills", "templates"):
         if not (root / sub).is_dir():
             report.error(f"Dossier requis manquant : {sub}/")
 
@@ -534,7 +818,12 @@ def validate_plugin(root: Path, report: Report) -> None:
             continue
         if fpath.suffix.lower() not in (".py", ".md", ".json", ".svg"):
             continue
-        content = fpath.read_text(encoding="utf-8", errors="replace")
+        raw_bytes = fpath.read_bytes()
+        if raw_bytes.startswith(b"\xef\xbb\xbf"):
+            report.error(f"BOM UTF-8 interdit dans {fpath}")
+        if b"\r\n" in raw_bytes:
+            report.error(f"Fin de ligne CRLF interdite (LF requis) dans {fpath}")
+        content = raw_bytes.decode("utf-8", errors="replace")
         if FORBIDDEN_MOD_RE.search(content):
             report.error(f"Jargon interdit détecté dans {fpath}")
         for label, rx in PRIVATE_LEAK_RES:
@@ -554,8 +843,16 @@ def main(argv: list[str] | None = None) -> int:
         default=PLUGIN_ROOT_DEFAULT,
         help="Racine du plugin gravity-architect à auditer.",
     )
+    parser.add_argument(
+        "--fix-python-cmd",
+        action="store_true",
+        help="Adapte 'python3' en 'python' ou 'py -3' dans hooks.json sur une copie installée sous Windows.",
+    )
     args = parser.parse_args(argv)
     plugin_root = args.plugin_root.expanduser().resolve()
+
+    if args.fix_python_cmd:
+        return fix_python_cmd(plugin_root)
 
     report = Report()
     validate_plugin(plugin_root, report)

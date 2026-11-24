@@ -16,10 +16,11 @@ if str(PLUGIN_ROOT) not in sys.path:
 
 from core.delta import (  # noqa: E402
     append_budget_alerts as _append_budget_alerts, build_acked_project_entry as _build_acked_project_entry,
-    build_acked_surface_entry as _build_acked_surface_entry, collect_project_hygiene_alerts as _collect_project_hygiene_alerts,
-    compute_delta, compute_delta_with_state, compute_unified_diff as _compute_unified_diff,
-    editorial_state_from_snapshot as _editorial_state_from_snapshot, evaluate_hot_budgets,
-    load_editorial_state as _load_editorial_state, stabilize_unchanged_timestamps as _stabilize_unchanged_timestamps,
+    build_acked_surface_entry as _build_acked_surface_entry, collect_atelier_hygiene_alerts,
+    collect_project_hygiene_alerts as _collect_project_hygiene_alerts, compute_delta, compute_delta_with_state,
+    compute_unified_diff as _compute_unified_diff, editorial_state_from_snapshot as _editorial_state_from_snapshot,
+    evaluate_hot_budgets, load_editorial_state as _load_editorial_state,
+    stabilize_unchanged_timestamps as _stabilize_unchanged_timestamps,
 )
 from core.discovery import (  # noqa: E402
     REQUIRED_OFFICIAL_PLUGIN_FIELDS, check_agents_doc as _check_agents_doc,
@@ -143,7 +144,16 @@ def run_sync(
         prev_snapshot, full_snapshot, resolved_concept_root, editorial_state=prev_editorial_state,
         ack_editorial=ack_editorial, public_mode=effective_public, replacements=mask_pairs,
     )
+    pending_gen = {"tracking/snapshots/ecosystem_snapshot.md"} if not dry_run else None
+
+    def _merge_atelier_alerts() -> None:
+        for alert in collect_atelier_hygiene_alerts(resolved_concept_root, hot_budgets={}, ignore_missing_targets=pending_gen):
+            clean = _sanitize_markdown_paths(alert, replacements=mask_pairs) if effective_public else alert
+            if clean not in delta["hygiene_alerts"]:
+                delta["hygiene_alerts"].append(clean)
+
     _append_budget_alerts(delta, evaluate_hot_budgets(resolved_concept_root, budgets_cfg, project_ids, watch_impact_files=watch_impacts))
+    _merge_atelier_alerts()
     _stabilize_unchanged_timestamps(
         prev_snapshot, full_snapshot, prev_editorial_state, next_editorial_state, prev_delta, delta, ack_editorial=ack_editorial
     )
@@ -157,10 +167,10 @@ def run_sync(
     full_snapshot["hot_budgets"] = post_budgets
     before_alerts = list(delta["hygiene_alerts"])
     _append_budget_alerts(delta, post_budgets)
+    if apply_docs and not dry_run:
+        _merge_atelier_alerts()
     if apply_docs and not dry_run and delta["hygiene_alerts"] != before_alerts:
-        for item in apply_auto_doc_updates(
-            resolved_concept_root, full_snapshot, delta, dry_run=False, public_mode=effective_public, replacements=mask_pairs
-        ):
+        for item in apply_auto_doc_updates(resolved_concept_root, full_snapshot, delta, dry_run=False, public_mode=effective_public, replacements=mask_pairs):
             if item not in delta["auto_updated_files"]:
                 delta["auto_updated_files"].append(item)
 

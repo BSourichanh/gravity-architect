@@ -902,6 +902,97 @@ class TestInitAndInstall(unittest.TestCase):
         self.assertLess(idx_dev_push, idx_archive)
         self.assertLess(idx_archive, idx_metrics)
 
+        # Wave 2 : cycle 4 phases & checkpoint hybride
+        for w2_tok in ("PreInvocation", "atelier_status.py", "RequestFeedback=True", "ask_question", "batch_id", "verify_commands"):
+            self.assertIn(w2_tok, skill_txt, f"Token Wave 2 manquant dans SKILL.md : {w2_tok}")
+            self.assertIn(w2_tok, ref_txt, f"Token Wave 2 manquant dans workflows-and-hygiene.md : {w2_tok}")
+
+    def test_validate_int01_03_06_and_fix_python_cmd_install(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            fake_repo = root / "repo"
+            plug = fake_repo / "plugin"
+            shutil.copytree(PLUGIN_ROOT, plug, ignore=shutil.ignore_patterns("__pycache__", "*.pyc"))
+            (fake_repo / "README.md").write_text("# Repo\n- [Plugin](plugin/README.md)\n", encoding="utf-8", newline="\n")
+
+            ok_rep = validate.Report()
+            validate.validate_plugin(plug, ok_rep)
+            self.assertTrue(ok_rep.ok(strict=True), f"{ok_rep.errors} | {ok_rep.warnings}")
+
+            # 1. Manifeste invalide (SemVer, suggestedPrompts, disabled, author.name)
+            manifest_path = plug / "plugin.json"
+            orig_manifest = manifest_path.read_text(encoding="utf-8")
+            bad_manifest = json.loads(orig_manifest)
+            bad_manifest["version"] = "not-semver"
+            bad_manifest["disabled"] = "no"
+            bad_manifest["author"] = {"name": ""}
+            bad_manifest["suggestedPrompts"] = ["sans slash", "/cmd", "/ok — " + ("x" * 100)]
+            manifest_path.write_text(json.dumps(bad_manifest), encoding="utf-8", newline="\n")
+            man_rep = validate.Report()
+            validate.validate_plugin(plug, man_rep)
+            self.assertFalse(man_rep.ok(strict=True))
+            man_err = " | ".join(man_rep.errors)
+            self.assertIn("SemVer", man_err)
+            self.assertIn("disabled", man_err)
+            self.assertIn("author.name", man_err)
+            self.assertIn("suggestedPrompts", man_err)
+            manifest_path.write_text(orig_manifest, encoding="utf-8", newline="\n")
+
+            # 2. hooks.json invalide (clé inconnue, script .py manquant, CRLF)
+            hooks_path = plug / "hooks.json"
+            orig_hooks = hooks_path.read_bytes()
+            hooks_path.write_bytes(b'{"g": {"badKey": true, "PreInvocation": [{"type": "command", "command": "python3 hooks/missing.py"}]}}\r\n')
+            hk_rep = validate.Report()
+            validate.validate_plugin(plug, hk_rep)
+            self.assertFalse(hk_rep.ok(strict=True))
+            hk_err = " | ".join(hk_rep.errors)
+            self.assertIn("clés inconnues", hk_err)
+            self.assertIn("hooks/missing.py", hk_err)
+            self.assertIn("CRLF", hk_err)
+            hooks_path.write_bytes(orig_hooks)
+
+            # 3. BOM/CRLF sur .py/.svg et liens cassés / file: sur README/SKILL/references/../README
+            (plug / "assets" / "logo.svg").write_bytes(
+                b"\xef\xbb\xbf" + (PLUGIN_ROOT / "assets" / "logo.svg").read_bytes()
+            )
+            (plug / "README.md").write_text("# Plug\n- [Bad](missing/file.md)\n- [File](file:///tmp/x)\n", encoding="utf-8", newline="\n")
+            (fake_repo / "README.md").write_text("# Repo\n- [Broken](../nope.md)\n", encoding="utf-8", newline="\n")
+            link_rep = validate.Report()
+            validate.validate_plugin(plug, link_rep)
+            self.assertFalse(link_rep.ok(strict=True))
+            lk_err = " | ".join(link_rep.errors)
+            self.assertIn("BOM UTF-8", lk_err)
+            self.assertIn("Lien Markdown relatif cassé dans README.md", lk_err)
+            self.assertIn("Lien 'file:' interdit dans README.md", lk_err)
+            self.assertIn("Lien Markdown relatif cassé dans ../README.md", lk_err)
+
+            # 4. install.py + fix_python_cmd sous Windows simulé (source intacte)
+            src_hooks_before = (PLUGIN_ROOT / "hooks.json").read_text(encoding="utf-8")
+            target_win = root / "inst-win"
+            with mock.patch("install.os.name", "nt"), mock.patch("install.has_real_python3", return_value=False):
+                dry_buf = io.StringIO()
+                with contextlib.redirect_stdout(dry_buf):
+                    self.assertEqual(install.main(["--dry-run", "--target", str(target_win)]), 0)
+                self.assertIn("--fix-python-cmd", dry_buf.getvalue())
+
+                # Avec --no-fix-python : hooks.json conserve python3
+                target_nofix = root / "inst-nofix"
+                self.assertEqual(install.main(["--no-fix-python", "--target", str(target_nofix)]), 0)
+                self.assertIn("python3 hooks/pre_invocation_architect.py", (target_nofix / "hooks.json").read_text(encoding="utf-8"))
+
+                # Sans --no-fix-python : hooks.json adapté sur la copie, source intacte
+                with (
+                    mock.patch.object(validate, "has_real_python3", return_value=False),
+                    mock.patch.object(validate, "_detect_portable_python_cmd", return_value="python"),
+                ):
+                    self.assertEqual(validate.main(["--plugin-root", str(target_nofix), "--fix-python-cmd"]), 0)
+                adapted_hooks = json.loads((target_nofix / "hooks.json").read_text(encoding="utf-8"))
+                self.assertEqual(
+                    adapted_hooks["gravity-architect-command"]["PreInvocation"][0]["command"],
+                    "python hooks/pre_invocation_architect.py",
+                )
+            self.assertEqual((PLUGIN_ROOT / "hooks.json").read_text(encoding="utf-8"), src_hooks_before)
+
 
 if __name__ == "__main__":
     unittest.main()

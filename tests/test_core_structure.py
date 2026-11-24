@@ -53,6 +53,13 @@ class TestCoreStructureAndFacades(unittest.TestCase):
             self.assertFalse(raw.startswith(b"\xef\xbb\xbf"), f"BOM détecté dans {script_path.name}")
             self.assertNotIn(b"\r\n", raw, f"CRLF détecté dans {script_path.name}")
 
+        for rel in ("hooks.json", "hooks/pre_invocation_architect.py", "scripts/atelier_status.py"):
+            fpath = PLUGIN_ROOT / rel
+            self.assertTrue(fpath.is_file(), f"Fichier Wave 2 manquant : {fpath}")
+            raw = fpath.read_bytes()
+            self.assertFalse(raw.startswith(b"\xef\xbb\xbf"), f"BOM détecté dans {rel}")
+            self.assertNotIn(b"\r\n", raw, f"CRLF détecté dans {rel}")
+
     def test_facades_reexport_backward_compatible_symbols(self) -> None:
         sync_expected = (
             "SCHEMA_VERSION", "DEFAULT_HOT_BUDGETS", "DEFAULT_WATCH_KEYWORDS", "MACHINE_ABS_PATH_RE",
@@ -67,8 +74,8 @@ class TestCoreStructureAndFacades(unittest.TestCase):
             "render_ecosystem_snapshot_markdown", "compute_delta_with_state", "compute_delta",
             "render_delta_markdown", "format_delta_for_stdout", "replace_auto_block",
             "apply_auto_doc_updates", "run_sync", "build_parser", "main", "register_atelier",
-            "_parse_semver_tuple", "_compare_cli_versions", "_build_ecosystem_blocks",
-            "_format_project_tasks_block", "shutil", "datetime",
+            "collect_atelier_hygiene_alerts", "_parse_semver_tuple", "_compare_cli_versions",
+            "_build_ecosystem_blocks", "_format_project_tasks_block", "shutil", "datetime",
         )
         for name in sync_expected:
             self.assertTrue(hasattr(sync_tracking, name), f"sync_tracking.{name} manquant")
@@ -107,6 +114,15 @@ class TestCoreStructureAndFacades(unittest.TestCase):
             self.assertTrue(
                 (target / "skills" / "gravity-architect" / "references" / "workflows-and-hygiene.md").is_file(),
                 "references/workflows-and-hygiene.md non copié par install.py",
+            )
+            self.assertTrue((target / "hooks.json").is_file(), "hooks.json non copié par install.py")
+            self.assertTrue(
+                (target / "hooks" / "pre_invocation_architect.py").is_file(),
+                "hooks/pre_invocation_architect.py non copié par install.py",
+            )
+            self.assertTrue(
+                (target / "scripts" / "atelier_status.py").is_file(),
+                "scripts/atelier_status.py non copié par install.py",
             )
 
         manifest = json.loads((PLUGIN_ROOT / "plugin.json").read_text(encoding="utf-8"))

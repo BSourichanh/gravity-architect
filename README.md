@@ -24,11 +24,13 @@ gravity-architect/
 │   ├── config/module.json           # Contrat module Gravity (schema_version: 1)
 │   ├── README.md                    # Guide utilisateur du plugin
 │   ├── assets/logo.svg              # Logo carré 1:1
+│   ├── hooks.json                   # Hook PreInvocation 0-token (/gravity-architect vide)
+│   ├── hooks/                       # pre_invocation_architect.py
 │   ├── rules/AGENTS.md              # Règle légère d'activation
 │   ├── skills/gravity-architect/    # Skill /gravity-architect & references/workflows-and-hygiene.md
 │   ├── templates/                   # Modèles d'ateliers Hot/Cold
 │   ├── core/                        # Noyau SRP (io_utils, discovery, git_collector, watches, delta, renderers, waves)
-│   └── scripts/                     # Façades CLI (sync_tracking.py, init_workspace.py) & validate.py
+│   └── scripts/                     # Façades CLI (atelier_status.py, sync_tracking.py, init_workspace.py) & validate.py
 └── tests/                           # Tests unitaires (unittest)
 ```
 
@@ -82,6 +84,12 @@ python plugin/scripts/sync_tracking.py --workspace ./mon-atelier --offline --ack
 ```
 
 Dans Antigravity, utilisez ensuite `/gravity-architect [init|add|sync|status|spec|task|archive|audit]` (voir [`plugin/README.md`](plugin/README.md)).
+
+### Wave 2 : `atelier_status.py`, hook `PreInvocation` 0-token, hygiène `INT-07`, validateur `INT-01/03/06` & cycle 4 phases (`Unreleased`)
+- **État consultatif 0-token (`plugin/scripts/atelier_status.py` + `plugin/hooks.json` / `plugin/hooks/pre_invocation_architect.py`) :** `/gravity-architect` sans argument s'exécute en `PreInvocation` lecture seule (`0` écriture disque, `0` capture `gravity-metrics`) : résout l'atelier (`resolve_workspace_root`), liste specs et tasks actives par vague/statut, sonde Bridge SQLite strictement en `?mode=ro` (`PRAGMA query_only = ON`, sans création de DB ni symlink), collecte les alertes d'hygiène (`INT-07`) et propose les actions suggérées.
+- **Cycle 4 phases & checkpoint hybride :** `/gravity-architect "<instruction>"` formalise Conception (`research` + `/grill-me` + `/plan`) → Planification (ancres `research`, `tasks/`, `core/waves.py --check-waves`, 1 checkpoint unique via artefact `RequestFeedback=True` et/ou `ask_question` explicite) → Production (Bridge `batch_id` + mini-checkpoint `dev`) → Validation (`verify_commands`, commit/push `dev`, archive, docs écosystème, réinstall fin Validation uniquement, récap, `gravity-metrics`).
+- **Hygiène `INT-07` (`core/delta.py` + `sync_tracking.py`) :** `collect_atelier_hygiene_alerts()` signale de façon non bloquante les dérives `*_TEMPLATE.md`, les liens Markdown relatifs cassés ou `file:` dans les fichiers Hot / `audits/*/README.md` et les dépassements de budgets `AGENTS.md` / `ECOSYSTEM.md`.
+- **Validateur `INT-01/03/06` & portabilité Windows (`validate.py` + `install.py`) :** validation SemVer stricte, `suggestedPrompts` (`/cmd — résumé` `<= 100` car.), `hooks.json` et scripts `.py`, BOM/LF sur tout `.py/.md/.json/.svg`, liens relatifs/`file:` dans `README.md`/`SKILL.md`/`references/*.md`, et `--fix-python-cmd` automatique lors de `install.py` sur Windows sans `python3` réel.
 
 ### Wave 1 : `tasks/`, validation DAG/vagues (`core/waves.py`), posture & modularité (`Unreleased`)
 - **Unification `tasks/` & validation des vagues (`plugin/core/waves.py`) :** remplacement de `handoffs/` par `tasks/` (`plugin/templates/task-template.md`, bloc `project-tasks:<id>`, `pending_tasks`/`archived_tasks`), enrichissement de `parse_artifact_file()` (`id`, `wave`, `wave_raw`, `dependencies`, `workflow_profile`, `target_files`, `anchors` hybrides `::` / `~L`), exposition de `artifacts` dans `delta` et rendu `## Artefacts actifs` par vague dans `render_delta_markdown()`, et validateur CLI `core/waves.py --check-waves` (*fail-closed* : `wave >= 1`, `<= 1` task/dépôt/vague, fichiers cibles disjoints, DAG acyclique 3 couleurs, ancres hybrides et `<= 5` fichiers code).

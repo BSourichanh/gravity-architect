@@ -1,0 +1,12 @@
+{
+  "gravity-architect-command": {
+    "enabled": true,
+    "PreInvocation": [
+      {
+        "type": "command",
+        "command": "python3 hooks/pre_invocation_architect.py",
+        "timeout": 10
+      }
+    ]
+  }
+}
