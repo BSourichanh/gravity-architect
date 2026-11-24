@@ -67,7 +67,6 @@ PRIVATE_LEAK_RES = (
             re.IGNORECASE,
         ),
     ),
-    ("référence projet frère", re.compile(r"gravity-" + r"metrics", re.IGNORECASE)),
     ("archive interne", re.compile(r"BLUE" + r"PRINT-v0\.1", re.IGNORECASE)),
     ("dossier atelier local", re.compile(r"gravity_" + r"projects", re.IGNORECASE)),
 )

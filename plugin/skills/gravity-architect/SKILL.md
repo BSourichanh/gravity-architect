@@ -45,7 +45,7 @@ Procédures détaillées (Bridge, Plan Mode, callbacks, onboarding) : [workflows
 ### 5. `spec <slug>` · `handoff <projet> <slug>` · `archive <slug>`
 - **`spec <slug>` :** challenger le besoin, vérifier l'existant, créer `specs/<YYYY-MM-DD>-<slug>.md` depuis `specs/_TEMPLATE.md`.
 - **`handoff <projet> <slug>` & Bridge :** créer `handoffs/<YYYY-MM-DD>-<projet>-<slug>.md` depuis `handoffs/_TEMPLATE.md` (décisions, périmètre, invariants `tracking/projects/<projet>.md`, vérifs). Afficher *(« rédigé, non déployé »)* et proposer `/gravity-bridge`. Sur demande d'envoi/dispatch de handoffs, **1 seul `ask_question` récapitulatif** (cibles, objets, `file_refs`, posture) vaut activation Bridge + `approved=true, dispatch=true` (0 appel MCP silencieux, 0 double confirmation).
-- **`archive <slug>` :** déplacer vers `specs/archive/` et `handoffs/archive/` (`done`), actualiser pistes actives puis `--offline --ack-editorial --print-delta`.
+- **`archive <slug>` :** déplacer vers `specs/archive/` et `handoffs/archive/` (`done`), actualiser pistes actives puis `--offline --ack-editorial --print-delta` ; clôture finale `gravity-metrics` post-commit/install/push ([`workflows-and-hygiene.md`](references/workflows-and-hygiene.md) §3).
 
 ### 6. `/gravity-architect audit [projet|all]` *(Code & Architecture)*
 - Auditer en **lecture seule absolue** les dépôts suivis uniquement sur **Code & Architecture** *(jamais d'audit agent ni métriques)* ; rédiger `audits/code/<YYYY-MM-DD>-audit-code-<cible>.md` (`CODE-XX-N` `P0`/`P1`/`P2`) et mettre à jour `audits/code/README.md` *(isolé d'`audits/agents/`)*.

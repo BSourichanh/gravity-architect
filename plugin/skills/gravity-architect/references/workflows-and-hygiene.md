@@ -39,8 +39,15 @@ Fiche de référence chargée à la demande depuis [`SKILL.md`](../SKILL.md) *(p
 ### Consultation des jobs Bridge
 - Pour suivre un job ou callback émis vers un workspace tiers, utiliser `manage_thread(action="get_job")` *(jamais `read_thread` complet en boucle)* afin d'éviter la saturation du contexte.
 
-### Clôture Git & réinstallation écosystème
-- Sur feu vert humain explicite, après revue, vérifications vertes et commit sur `dev` *(jamais `git push` sans demande explicite)*, recommander la réinstallation coordonnée via `ecosystem_install.py --update --modules <...> --strict` (`python3` sous Linux/macOS, `python` sous Windows) plutôt qu'un `install.py --strict` isolé, afin de maintenir la cohérence entre modules installés.
+### Clôture ordonnée d'un lot & `gravity-metrics` final
+Respecter strictement ces 4 étapes en fin de cycle :
+1. **Retours & vérifications :** confirmer que les retours Bridge sont clos (`0` job actif) et que toutes les vérifications obligatoires sont vertes.
+2. **Archivage atelier :** déplacer `specs/` → `specs/archive/` et `handoffs/` → `handoffs/archive/` (`done`), actualiser les pistes actives puis exécuter `sync_tracking.py --offline --ack-editorial --print-delta`.
+3. **Clôture Git & réinstallation écosystème *(sur feu vert humain explicite)* :** exécuter commit sur `dev` / `merge` / tag / réinstallation coordonnée via `ecosystem_install.py --update --modules <...> --strict` (`python3` sous Linux/macOS, `python` sous Windows, plutôt qu'un `install.py --strict` isolé afin de maintenir la cohérence entre modules installés) et éventuel `git push` *(jamais `git push` sans demande explicite)*.
+4. **Clôture `gravity-metrics` en toute dernière étape *(session racine d'atelier uniquement)* :** si `~/.gemini/config/plugins/gravity-metrics/scripts/cli.py` existe *(ou `%USERPROFILE%\.gemini\config\plugins\gravity-metrics\scripts\cli.py` sous Windows ; no-op silencieux — zéro erreur ni message — si absent)*, clore la capture de la session racine courante :
+   - `python3 ~/.gemini/config/plugins/gravity-metrics/scripts/cli.py archive <conversation_id> -l "<slug>" --workspace .` *(sous Windows : `python` sur le chemin `%USERPROFILE%\...`)*
+   - Si un `git push` ou une release intervient un tour plus tard dans la **même** conversation déjà scellée, ré-exécuter avec `--update-sealed`.
+   - Ne **jamais** passer `--force`, et tolérer un éventuel blocage `PendingBridgeJobsError` si d'autres jobs Bridge restent actifs.
 
 ## 4. `/gravity-architect add` sans argument (`../`)
 

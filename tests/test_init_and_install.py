@@ -846,6 +846,18 @@ class TestInitAndInstall(unittest.TestCase):
             self.assertIn(token, skill_txt, f"Règle critique manquante dans SKILL.md : {token}")
             self.assertIn(token, ref_txt, f"Règle critique manquante dans workflows-and-hygiene.md : {token}")
 
+        # Clôture ordonnée & gravity-metrics final
+        self.assertIn("gravity-metrics", skill_txt)
+        self.assertIn("references/workflows-and-hygiene.md) §3", skill_txt)
+        for token in (
+            "gravity-metrics/scripts/cli.py archive <conversation_id>",
+            "--update-sealed",
+            "--force",
+            "PendingBridgeJobsError",
+            "no-op silencieux",
+        ):
+            self.assertIn(token, ref_txt, f"Règle clôture manquante dans workflows-and-hygiene.md : {token}")
+
 
 if __name__ == "__main__":
     unittest.main()
