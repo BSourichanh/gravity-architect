@@ -5,6 +5,7 @@
 - **Rôle :** <rôle court>
 - **Release (`main`) :** `<vX.Y.Z>` (`<hash>`) — [`<id>-CHANGELOG.md`](../../archives/changelogs/<id>-CHANGELOG.md)
 - **Branche `dev` :** `<hash>` (`+N` vs `main`), manifeste `<ver>`
+- **Installé local :** `<ver>` *(aligné)*
 - **WIP en cours :** Propre
 - **Dernière synchro :** `YYYY-MM-DD`
 <!-- AUTO:END:project-meta:<id> -->
@@ -18,12 +19,14 @@
 - *(3 à 5 lignes résumant uniquement la dernière release ; historique complet dans [`<id>-CHANGELOG.md`](../../archives/changelogs/<id>-CHANGELOG.md).)*
 
 ## 3. Invariants (source unique)
-- *(Lister ici les invariants propres à ce dépôt : branche, conventions Git, tests, vérifications strictes.)*
+- **Branche & Git :** *(`dev` pour les évolutions, release `main` et tag sur accord humain.)*
+- **Qualité & dépendances :** *(100 % stdlib, encodage UTF-8/LF, contrats techniques du dépôt.)*
+- **Vérifications obligatoires :** *(Commandes strictes et suite de tests du dépôt cible.)*
 
-## 4. Handoffs & Pistes actives
-<!-- AUTO:START:project-handoffs:<id> -->
-- **Handoffs en attente (`handoffs/`) :** aucun.
-<!-- AUTO:END:project-handoffs:<id> -->
+## 4. Tasks & Pistes actives
+<!-- AUTO:START:project-tasks:<id> -->
+- **Tasks en attente (`tasks/`) :** aucune.
+<!-- AUTO:END:project-tasks:<id> -->
 
 ### Pistes actives
 - *(3 pistes actives maximum.)*

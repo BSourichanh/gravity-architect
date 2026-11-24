@@ -1,8 +1,8 @@
 ---
 name: gravity-architect
 description: >-
-  Orchestre un atelier générique de conception, specs, handoffs, architecture Hot/Cold
-  et suivi multi-projets lecture seule. Activer sur /gravity-architect [init|add|sync|status|spec|handoff|archive|audit]
+  Orchestre un atelier générique de conception, specs, tasks, architecture Hot/Cold
+  et suivi multi-projets lecture seule. Activer sur /gravity-architect [init|add|sync|status|spec|task|archive|audit]
   ou lors d'une mise à jour d'un dépôt suivi.
 ---
 
@@ -16,8 +16,8 @@ Détails (Bridge, Plan Mode, callbacks, onboarding) : [workflows-and-hygiene.md]
    - **Clôture Git & installation :** plan/spec validé, `0` job Bridge, revue propre et `100 %` vérifs vertes (*fail-closed* global ; stopper avant tout `commit`/`push` si échec ou hors `dev`) → auto `git add`/`commit` sur `dev` + `git push origin dev` *(jamais `--force`)* + `ecosystem_install.py --update --modules <...> --strict` (`python3` POSIX, `python` Win, plutôt qu'`install.py --strict`). `merge dev -> main`, tag SemVer et release sur accord humain explicite seul.
 3. **Hygiène tokens & Plan Mode :**
    - Exécuter `sync_tracking.py --print-delta` avant d'inspecter les dépôts ; déléguer l'exploration multi-fichiers à un sous-agent lecture seule (`research`).
-   - Ne jamais recopier de spec/handoff complet dans `exit_plan_mode(plan=...)` (plan structurel concis seul).
-   - Suggérer `/compact` ou une nouvelle session après production des handoffs.
+   - Ne jamais recopier de spec/task complète dans `exit_plan_mode(plan=...)` (plan structurel concis seul).
+   - Suggérer `/compact` ou une nouvelle session après production des tasks.
 4. **Registre :** `init_workspace.py` / `sync_tracking.py` (hors `--check`/`--dry-run`/`--discover`) inscrivent l'atelier dans `<architect_home>/ateliers.json` (opt-out `GRAVITY_ARCHITECT_SKIP_REGISTRY=1`).
 
 ## Routage
@@ -42,10 +42,10 @@ Détails (Bridge, Plan Mode, callbacks, onboarding) : [workflows-and-hygiene.md]
 3. **`EDITORIAL_UPDATE_REQUIRED` / `--full` :** lire `Cibles éditoriales LLM`, éditer au minimum (préserver `<!-- AUTO:START/END -->` et budgets Hot), puis `--offline --ack-editorial --print-delta`.
 4. **Garde WIP & Bridge :** jamais `--ack-editorial` si WIP non commité dans les dépôts suivis ; suivre Bridge via `manage_thread(action="get_job")` (0 `read_thread` complet). Commit atelier seul si `--commit`, sans `git push`.
 
-### 5. `spec <slug>` · `handoff <projet> <slug>` · `archive <slug>`
+### 5. `spec <slug>` · `task <projet> <slug>` · `archive <slug>`
 - **`spec <slug>` :** challenger le besoin, vérifier l'existant, créer `specs/<YYYY-MM-DD>-<slug>.md` depuis `specs/_TEMPLATE.md`.
-- **`handoff <projet> <slug>` & Bridge :** créer `handoffs/<YYYY-MM-DD>-<projet>-<slug>.md` depuis `handoffs/_TEMPLATE.md` (décisions, périmètre, invariants `tracking/projects/<projet>.md`, vérifs). Afficher *(« rédigé, non déployé »)* et proposer `/gravity-bridge`. Sur demande d'envoi/dispatch de handoffs, **1 seul `ask_question` récapitulatif** (cibles, objets, `file_refs`, posture) vaut activation Bridge + `approved=true, dispatch=true` (0 appel MCP silencieux, 0 double confirmation).
-- **`archive <slug>` :** après vérifs, commit/push `dev` et install, déplacer vers `specs/archive/` et `handoffs/archive/` (`done`), actualiser pistes actives, `--offline --ack-editorial --print-delta`, puis clôture `gravity-metrics` ([`workflows-and-hygiene.md`](references/workflows-and-hygiene.md) §3).
+- **`task <projet> <slug>` & vagues/Bridge :** créer `tasks/<YYYY-MM-DD>-<projet>-<slug>.md` depuis `tasks/_TEMPLATE.md` (vague, dépendances, profil, ancres `::`/`~L`, `<= 5` fichiers code, invariants `tracking/projects/<projet>.md`, vérifs) puis valider via `core/waves.py --check-waves`. Afficher *(« rédigé, non déployé »)* et proposer `/gravity-bridge`. Sur demande d'envoi/dispatch de tasks, **1 seul `ask_question` récapitulatif** (cibles, objets, `file_refs`, posture) vaut activation Bridge + `approved=true, dispatch=true` (0 appel MCP silencieux, 0 double confirmation).
+- **`archive <slug>` :** après vérifs, commit/push `dev` et install, déplacer vers `specs/archive/` et `tasks/archive/` (`done`), actualiser pistes actives, `--offline --ack-editorial --print-delta`, puis clôture `gravity-metrics` ([`workflows-and-hygiene.md`](references/workflows-and-hygiene.md) §3).
 
 ### 6. `/gravity-architect audit [projet|all]` *(Code & Architecture)*
 - Auditer en **lecture seule absolue** les dépôts suivis sur **Code & Architecture** *(0 audit agent/métriques)* ; rédiger `audits/code/<YYYY-MM-DD>-audit-code-<cible>.md` (`CODE-XX-N` `P0`–`P2`) et MAJ `audits/code/README.md` *(isolé d'`audits/agents/`)*.

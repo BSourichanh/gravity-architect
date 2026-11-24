@@ -208,8 +208,35 @@ def render_ecosystem_snapshot_markdown(
     return rendered
 
 
+def _render_active_artifacts_lines(arts: dict) -> list[str]:
+    specs = arts.get("specs") or []
+    pending_tasks = arts.get("pending_tasks") or []
+    if not specs and not pending_tasks:
+        return []
+    out = ["## Artefacts actifs"]
+    if specs:
+        out.append("- **Specs actives (`specs/`) :**")
+        for s in specs:
+            out.append(f"  - `{s.get('filename') or s.get('id', '?')}` (`{s.get('status', 'unknown')}`, cible : `{s.get('target_project') or 'n/a'}`) — *{s.get('title', '')}*")
+    if pending_tasks:
+        grouped: dict[tuple[int, int], tuple[str, list[dict]]] = {}
+        for t in pending_tasks:
+            w = t.get("wave")
+            if isinstance(w, int) and not isinstance(w, bool) and w >= 1:
+                key, label = (0, w), f"Vague {w}"
+            else:
+                key, label = (1, 0), "Sans vague"
+            grouped.setdefault(key, (label, []))[1].append(t)
+        for _key, (label, items) in sorted(grouped.items(), key=lambda kv: kv[0]):
+            out.append(f"- **{label} (`tasks/`) :**")
+            for t in items:
+                out.append(f"  - `{t.get('filename') or t.get('id', '?')}` (`{t.get('status', 'unknown')}`, cible : `{t.get('target_project') or 'n/a'}`) — *{t.get('title', '')}*")
+    out.append("")
+    return out
+
+
 def render_delta_markdown(
-    delta: dict, dry_run: bool = False, *, replacements: list[tuple[str, str]] | None = None,
+    delta: dict, dry_run: bool = False, *, artifacts: dict | None = None, replacements: list[tuple[str, str]] | None = None,
 ) -> str:
     """Formate le micro-delta ultra-compact pour consommation LLM à coût minimal."""
     status = "EDITORIAL_UPDATE_REQUIRED" if delta.get("needs_editorial_update") else "NO_EDITORIAL_CHANGES"
@@ -269,6 +296,9 @@ def render_delta_markdown(
                     lines.append(f"  - {bullet}")
                     used_chars += len(bullet) + 4
         lines.append("")
+
+    arts = artifacts if artifacts is not None else (delta.get("artifacts") or {})
+    lines.extend(_render_active_artifacts_lines(arts))
 
     rendered = "\n".join(lines).rstrip() + "\n"
     if delta.get("public_mode"):
@@ -342,26 +372,26 @@ def replace_auto_block(text: str, block_id: str, new_body: str) -> tuple[str, bo
     return updated, updated.replace("\r\n", "\n") != text.replace("\r\n", "\n")
 
 
-def format_project_handoffs_block(pid: str, artifacts: dict) -> str:
-    """Formate le bloc `project-handoffs:<id>` avec plafond compact sur l'historique archivé."""
+def format_project_tasks_block(pid: str, artifacts: dict) -> str:
+    """Formate le bloc `project-tasks:<id>` avec plafond compact sur l'historique archivé."""
     target_re = re.compile(rf"(?<![a-z0-9-]){re.escape(pid.lower())}(?![a-z0-9-])")
 
     def _matches(item: dict) -> bool:
         target = (item.get("target_project") or "").lower()
         return bool(target_re.search(target)) if target else (f"-{pid.lower()}-" in item["filename"].lower())
 
-    pending = [h for h in artifacts.get("pending_handoffs", []) if _matches(h)]
-    archived = [h for h in artifacts.get("archived_handoffs", []) if _matches(h)]
+    pending = [t for t in artifacts.get("pending_tasks", []) if _matches(t)]
+    archived = [t for t in artifacts.get("archived_tasks", []) if _matches(t)]
     lines = (
-        ["- **Handoffs en attente (`handoffs/`) :**", *(f"  - [`{h['filename']}`](../../{h['rel_path']}) (`{h['status']}`) — *{h['title']}*" for h in pending)]
+        ["- **Tasks en attente (`tasks/`) :**", *(f"  - [`{t['filename']}`](../../{t['rel_path']}) (`{t['status']}`) — *{t['title']}*" for t in pending)]
         if pending
-        else ["- **Handoffs en attente (`handoffs/`) :** aucun."]
+        else ["- **Tasks en attente (`tasks/`) :** aucune."]
     )
     if archived:
-        lines.append("- **Handoffs archivés (`handoffs/archive/`) :**")
-        lines.extend(f"  - [`{h['filename']}`](../../{h['rel_path']}) (`{h['status']}`)" for h in archived[-3:])
+        lines.append("- **Tasks archivées (`tasks/archive/`) :**")
+        lines.extend(f"  - [`{t['filename']}`](../../{t['rel_path']}) (`{t['status']}`)" for t in archived[-3:])
         if len(archived) > 3:
-            lines.append(f"  - *(+{len(archived) - 3} plus anciens dans `handoffs/archive/`)*")
+            lines.append(f"  - *(+{len(archived) - 3} plus anciennes dans `tasks/archive/`)*")
     return "\n".join(lines)
 
 
@@ -404,23 +434,23 @@ def build_ecosystem_blocks(
     else:
         watch_lines.append("- Aucune veille configurée dans `projects.json`.")
 
-    artifacts = snapshot.get("artifacts") or {"specs": [], "archived_specs": [], "pending_handoffs": [], "archived_handoffs": []}
+    artifacts = snapshot.get("artifacts") or {"specs": [], "archived_specs": [], "pending_tasks": [], "archived_tasks": []}
     art_lines: list[str] = []
-    for key, label, tpl in (("specs", "Spécifications actives (`specs/`)", "specs/_TEMPLATE.md"), ("pending_handoffs", "Handoffs en attente (`handoffs/`)", "handoffs/_TEMPLATE.md")):
+    for key, label, tpl in (("specs", "Spécifications actives (`specs/`)", "specs/_TEMPLATE.md"), ("pending_tasks", "Tasks en attente (`tasks/`)", "tasks/_TEMPLATE.md")):
         items = artifacts.get(key) or []
         if items:
             art_lines.append(f"- **{label} :**")
             art_lines.extend(f"  - [`{x['filename']}`]({x['rel_path']}) (`{x['status']}`, cible : `{x['target_project'] or 'n/a'}`) — *{x['title']}*" for x in items)
         else:
-            art_lines.append(f"- **{label} :** {'aucune' if key == 'specs' else 'aucun'} *(modèle : [`{tpl}`]({tpl}))*.")
+            art_lines.append(f"- **{label} :** aucune *(modèle : [`{tpl}`]({tpl}))*.")
         if key == "specs" and artifacts.get("archived_specs"):
             last_s = artifacts["archived_specs"][-1]
             art_lines.append(f"- **Spécifications archivées (`specs/archive/`) :** {len(artifacts['archived_specs'])} *(ex. [`{last_s['filename']}`]({last_s['rel_path']}))*")
-    archived_handoffs = artifacts.get("archived_handoffs") or []
+    archived_tasks = artifacts.get("archived_tasks") or []
     art_lines.append(
-        f"- **Handoffs archivés (`handoffs/archive/`) :** {len(archived_handoffs)} *(dernier : [`{archived_handoffs[-1]['filename']}`]({archived_handoffs[-1]['rel_path']}))*"
-        if archived_handoffs
-        else "- **Handoffs archivés (`handoffs/archive/`) :** aucun pour le moment."
+        f"- **Tasks archivées (`tasks/archive/`) :** {len(archived_tasks)} *(dernière : [`{archived_tasks[-1]['filename']}`]({archived_tasks[-1]['rel_path']}))*"
+        if archived_tasks
+        else "- **Tasks archivées (`tasks/archive/`) :** aucune pour le moment."
     )
 
     alerts = delta.get("hygiene_alerts") or []
@@ -525,12 +555,12 @@ def apply_auto_doc_updates(
         if not card_path.is_file():
             continue
         meta_body = _build_project_card_meta_body(proj, sync_date, effective_public)
-        handoffs_body = format_project_handoffs_block(pid, artifacts)
+        tasks_body = format_project_tasks_block(pid, artifacts)
         if effective_public:
             meta_body = sanitize_markdown_paths(meta_body, replacements=mask_pairs)
-            handoffs_body = sanitize_markdown_paths(handoffs_body, replacements=mask_pairs)
+            tasks_body = sanitize_markdown_paths(tasks_body, replacements=mask_pairs)
         current, ch1 = replace_auto_block(card_path.read_text(encoding="utf-8", errors="replace"), f"project-meta:{pid}", meta_body)
-        current, ch2 = replace_auto_block(current, f"project-handoffs:{pid}", handoffs_body)
+        current, ch2 = replace_auto_block(current, f"project-tasks:{pid}", tasks_body)
         if ch1 or ch2:
             if not dry_run:
                 write_utf8(card_path, current)

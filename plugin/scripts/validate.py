@@ -39,6 +39,7 @@ ALLOWED_LOCAL_MODULES = {
     "watches",
     "delta",
     "renderers",
+    "waves",
 }
 MODULE_CONTRACT_FIELDS = {
     "schema_version",
@@ -76,7 +77,7 @@ REQUIRED_TEMPLATES = (
     "ECOSYSTEM.md",
     "projects.json",
     "spec-template.md",
-    "handoff-template.md",
+    "task-template.md",
     "project-card-template.md",
     "impact-template.md",
     "archives-readme.md",
@@ -389,10 +390,24 @@ def _validate_rules_and_templates(root: Path, report: Report) -> None:
             data = json.loads(tpl_cfg.read_text(encoding="utf-8"))
             if not isinstance(data, dict) or data.get("schema_version") != 5:
                 report.error("templates/projects.json doit définir schema_version=5.")
-            elif "privacy" in data:
-                priv = data["privacy"]
-                if not isinstance(priv, dict) or not isinstance(priv.get("public_mode"), bool):
-                    report.error("templates/projects.json : 'privacy.public_mode' doit être un booléen.")
+            else:
+                if "privacy" in data:
+                    priv = data["privacy"]
+                    if not isinstance(priv, dict) or not isinstance(priv.get("public_mode"), bool):
+                        report.error("templates/projects.json : 'privacy.public_mode' doit être un booléen.")
+                if "post_commit_install_cmd" in data:
+                    cmd = data["post_commit_install_cmd"]
+                    valid_cmd = (
+                        cmd is None
+                        or (isinstance(cmd, str) and bool(cmd.strip()))
+                        or (isinstance(cmd, list) and len(cmd) > 0 and all(isinstance(x, str) and bool(x.strip()) for x in cmd))
+                    )
+                    if not valid_cmd:
+                        report.error("templates/projects.json : 'post_commit_install_cmd' doit être str, list[str] ou null.")
+                if "verify_commands" in data:
+                    vcmds = data["verify_commands"]
+                    if not isinstance(vcmds, list) or not all(isinstance(x, str) and bool(x.strip()) for x in vcmds):
+                        report.error("templates/projects.json : 'verify_commands' doit être une liste de chaînes non vides.")
         except Exception as exc:
             report.error(f"templates/projects.json invalide : {exc}")
 

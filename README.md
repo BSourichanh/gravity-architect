@@ -2,11 +2,11 @@
 
 > ### Démarrage 2 min & Place dans l'écosystème
 > - **Place :** **Palier 3 — Multi-projets** *(prérequis : [`gravity`](https://github.com/BSourichanh/gravity) Core)*
-> - **Rôle :** Orchestrer un atelier de conception Hot/Cold (`specs/`, `handoffs/`, `audits/code/`) et suivre plusieurs dépôts en lecture seule.
+> - **Rôle :** Orchestrer un atelier de conception Hot/Cold (`specs/`, `tasks/`, `audits/code/`) et suivre plusieurs dépôts en lecture seule.
 > - **Démarrage :** `/gravity-architect init` puis `/gravity-architect sync`
 > - **Hub documentaire (`gravity/docs/`) :** [Démarrage rapide](https://github.com/BSourichanh/gravity/blob/main/docs/getting-started.md) · [Parcours utilisateur](https://github.com/BSourichanh/gravity/blob/main/docs/user-journey.md) · [Aide-mémoire commandes](https://github.com/BSourichanh/gravity/blob/main/docs/command-cheatsheet.md) · [Dépannage & cycle de vie](https://github.com/BSourichanh/gravity/blob/main/docs/troubleshooting-and-lifecycle.md)
 
-> Plugin Antigravity générique (**100 % bibliothèque standard Python 3.10+**) de l'écosystème [Gravity](https://github.com/BSourichanh/gravity) (aux côtés de [Gravity Metrics](https://github.com/BSourichanh/gravity-metrics)) dédié au cadrage d'architecture, au brainstorming multi-projets, à la production de spécifications (`specs/`) et de briefs autonomes (`handoffs/`), avec gestion **Hot / Cold**, mode confidentiel (`privacy.public_mode`) et synchronisation lecture seule des dépôts suivis.
+> Plugin Antigravity générique (**100 % bibliothèque standard Python 3.10+**) de l'écosystème [Gravity](https://github.com/BSourichanh/gravity) (aux côtés de [Gravity Metrics](https://github.com/BSourichanh/gravity-metrics)) dédié au cadrage d'architecture, au brainstorming multi-projets, à la production de spécifications (`specs/`) et de tasks d'exécution autonomes par vagues (`tasks/`), avec gestion **Hot / Cold**, mode confidentiel (`privacy.public_mode`) et synchronisation lecture seule des dépôts suivis.
 
 ---
 
@@ -27,7 +27,7 @@ gravity-architect/
 │   ├── rules/AGENTS.md              # Règle légère d'activation
 │   ├── skills/gravity-architect/    # Skill /gravity-architect & references/workflows-and-hygiene.md
 │   ├── templates/                   # Modèles d'ateliers Hot/Cold
-│   ├── core/                        # Noyau SRP (io_utils, discovery, git_collector, watches, delta, renderers)
+│   ├── core/                        # Noyau SRP (io_utils, discovery, git_collector, watches, delta, renderers, waves)
 │   └── scripts/                     # Façades CLI (sync_tracking.py, init_workspace.py) & validate.py
 └── tests/                           # Tests unitaires (unittest)
 ```
@@ -81,13 +81,13 @@ python plugin/scripts/sync_tracking.py --workspace ./mon-atelier --print-delta
 python plugin/scripts/sync_tracking.py --workspace ./mon-atelier --offline --ack-editorial --print-delta
 ```
 
-Dans Antigravity, utilisez ensuite `/gravity-architect [init|add|sync|status|spec|handoff|archive|audit]` (voir [`plugin/README.md`](plugin/README.md)).
+Dans Antigravity, utilisez ensuite `/gravity-architect [init|add|sync|status|spec|task|archive|audit]` (voir [`plugin/README.md`](plugin/README.md)).
 
-### Posture Architecte, registre `ateliers.json` & découpage modulaire `plugin/core/` (`Unreleased`)
+### Wave 1 : `tasks/`, validation DAG/vagues (`core/waves.py`), posture & modularité (`Unreleased`)
+- **Unification `tasks/` & validation des vagues (`plugin/core/waves.py`) :** remplacement de `handoffs/` par `tasks/` (`plugin/templates/task-template.md`, bloc `project-tasks:<id>`, `pending_tasks`/`archived_tasks`), enrichissement de `parse_artifact_file()` (`id`, `wave`, `wave_raw`, `dependencies`, `workflow_profile`, `target_files`, `anchors` hybrides `::` / `~L`), exposition de `artifacts` dans `delta` et rendu `## Artefacts actifs` par vague dans `render_delta_markdown()`, et validateur CLI `core/waves.py --check-waves` (*fail-closed* : `wave >= 1`, `<= 1` task/dépôt/vague, fichiers cibles disjoints, DAG acyclique 3 couleurs, ancres hybrides et `<= 5` fichiers code).
 - **Posture Architecte (Code RO + clôture auto sur `dev` *fail-closed*) :** `plugin/rules/AGENTS.md`, `plugin/skills/gravity-architect/SKILL.md` et `plugin/templates/AGENTS.md` distinguent strictement la lecture seule sur le code source des dépôts suivis (implémentation déléguée aux sessions cibles) de la clôture automatique sur `dev` (après plan/spec validé, `0` job Bridge, revue propre et `100 %` de vérifs vertes — *fail-closed* global : `git add`/`commit` sur `dev`, `git push origin dev` sans `--force`, `ecosystem_install.py --update --modules <...> --strict`, archivage atelier et `gravity-metrics`). `merge dev -> main`, tag SemVer et release restent sur accord humain explicite, et un simple `/gravity-architect sync` (même `--commit`) ne fait ni `commit` suivi ni `git push`.
 - **Registre centralisé (`<architect_home>/ateliers.json`) :** `init_workspace.py` (`init`, `--add`) et `sync_tracking.py` (hors `--check` / `--dry-run` et `--discover`) enregistrent automatiquement chaque atelier valide (`projects.json` + `ECOSYSTEM.md`, ordre MRU, max `20`, écriture atomique) dans `<architect_home>/ateliers.json` (`$GRAVITY_ARCHITECT_HOME` > `$GRAVITY_HOME/architect` > `~/.gemini/gravity/architect`) sans écrire dans le workspace cible. Opt-out via `GRAVITY_ARCHITECT_SKIP_REGISTRY=1` ; `resolve_workspace_root()` reste inchangé.
-- **Architecture SRP/DRY :** extraction des responsabilités cœur sous `plugin/core/` (`io_utils.py`, `discovery.py`, `git_collector.py`, `watches.py`, `delta.py`, `renderers.py`, tous ≤ 650 L, 100 % stdlib Python 3.10+, écriture atomique UTF-8 sans BOM / LF).
-- **Façades 100 % rétrocompatibles :** `plugin/scripts/sync_tracking.py` (≤ 250 L) et `plugin/scripts/init_workspace.py` (≤ 450 L) ré-exportent l'intégralité des symboles et options CLI existants.
+- **Architecture SRP/DRY (`plugin/core/` v0.5.1+) :** noyau modulaire sous `plugin/core/` (`io_utils.py`, `discovery.py`, `git_collector.py`, `watches.py`, `delta.py`, `renderers.py`, `waves.py`, tous ≤ 650 L, 100 % stdlib Python 3.10+, écriture atomique UTF-8 sans BOM / LF) et façades `plugin/scripts/sync_tracking.py` (≤ 250 L) / `init_workspace.py` (≤ 450 L).
 - **Hygiène tokens, passerelle Bridge & `references/` :** compactage de `plugin/skills/gravity-architect/SKILL.md` (`<= 6 000 o`) avec déport des procédures détaillées dans `plugin/skills/gravity-architect/references/workflows-and-hygiene.md` (statut `rédigé, non déployé` et passerelle Bridge en 1 `ask_question`, no-op Plan Mode sans `exit_plan_mode`, délégation `research`, garde WIP sur `--ack-editorial`, `manage_thread(action="get_job")`, clôture via `ecosystem_install.py --update --modules <...> --strict`, et proposition `../` sur `/gravity-architect add`), contrôlé par `plugin/scripts/validate.py --strict`.
 - **Onboarding fluide sur workspace vide :** sur dossier sans `./projects.json`, `/gravity-architect` bascule sur `init` guidé (1 `ask_question` incluant atelier vide `0` projet / `../` / chemins directs), `init_workspace.py --workspace . --run-sync --offline` initialise à `0` projet en 1 commande (nom dérivé du dossier courant hors noms génériques via `_derive_default_workspace_name()`), et `plugin/templates/ECOSYSTEM.md` oriente vers `/gravity-architect add <chemin>` et `/gravity-architect spec <slug>`.
 - **Clôture finale optionnelle (`gravity-metrics`) :** `plugin/skills/gravity-architect/references/workflows-and-hygiene.md` (§3) et `SKILL.md` (`archive <slug>`) formalisent la séquence ordonnée de fin de cycle (retours Bridge clos et `100 %` vérifs vertes *fail-closed* → auto `commit`/`push origin dev` non-force + `ecosystem_install.py --update` → archivage atelier + `sync_tracking.py --offline --ack-editorial --print-delta` → clôture finale optionnelle `gravity-metrics` via `cli.py archive <conversation_id>` / `--update-sealed`, sans `--force`, en no-op silencieux si absent).
@@ -124,7 +124,7 @@ python -m unittest discover -s tests -p "test_*.py" -v
 
 ## Documentation & Releases
 
-- [`CHANGELOG.md`](CHANGELOG.md) — Historique des releases (`v0.5.0`)
+- [`CHANGELOG.md`](CHANGELOG.md) — Historique des releases (`v0.5.1`)
 - [`plugin/README.md`](plugin/README.md) — Guide complet du plugin et des commandes `/gravity-architect`
 - [`AGENTS.md`](AGENTS.md) — Charte, invariants et vérifications obligatoires
 

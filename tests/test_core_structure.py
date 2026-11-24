@@ -26,6 +26,7 @@ CORE_MODULES = (
     "watches.py",
     "delta.py",
     "renderers.py",
+    "waves.py",
 )
 
 
@@ -67,7 +68,7 @@ class TestCoreStructureAndFacades(unittest.TestCase):
             "render_delta_markdown", "format_delta_for_stdout", "replace_auto_block",
             "apply_auto_doc_updates", "run_sync", "build_parser", "main", "register_atelier",
             "_parse_semver_tuple", "_compare_cli_versions", "_build_ecosystem_blocks",
-            "_format_project_handoffs_block", "shutil", "datetime",
+            "_format_project_tasks_block", "shutil", "datetime",
         )
         for name in sync_expected:
             self.assertTrue(hasattr(sync_tracking, name), f"sync_tracking.{name} manquant")

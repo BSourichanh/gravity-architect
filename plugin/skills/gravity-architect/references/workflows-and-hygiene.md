@@ -2,14 +2,14 @@
 
 Fiche de référence chargée à la demande depuis [`SKILL.md`](../SKILL.md) *(progressive disclosure : 0 taxe tokens au chargement initial)*.
 
-## 1. Post-handoff & Passerelle Bridge (`gravity-bridge`)
+## 1. Post-task, vagues & Passerelle Bridge (`gravity-bridge`)
 
-### Statut obligatoire après rédaction d'un handoff
-- Après création de `handoffs/<YYYY-MM-DD>-<projet>-<slug>.md`, afficher explicitement le statut **`rédigé, non déployé`**.
+### Statut obligatoire après rédaction d'une task
+- Après création de `tasks/<YYYY-MM-DD>-<projet>-<slug>.md` (et contrôle via `python "<PLUGIN_DIR>/core/waves.py" --check-waves --workspace .`), afficher explicitement le statut **`rédigé, non déployé`**.
 - Rappeler à l'utilisateur la possibilité d'envoyer le lot via `/gravity-bridge` (sans jamais envoyer de message Bridge proactivement).
 
 ### Passerelle guidée depuis l'atelier
-- Si l'utilisateur demande explicitement d'envoyer, transmettre ou dispatcher des handoffs depuis l'atelier *(même sans saisir le préfixe `/gravity-bridge`)* :
+- Si l'utilisateur demande explicitement d'envoyer, transmettre ou dispatcher des tasks depuis l'atelier *(même sans saisir le préfixe `/gravity-bridge`)* :
   1. Préparer un récapitulatif structuré : dépôt(s) cible(s), objet(s), `file_refs` relatifs *(max 20)* et posture (`approved=true, dispatch=true` ou dépôt boîte aux lettres seule).
   2. Déclencher **1 seul `ask_question` récapitulatif** demandant validation explicite de cet envoi.
   3. Cette validation unique vaut simultanément activation de la passerelle Bridge et feu vert humain `approved=true, dispatch=true` : **0 appel MCP silencieux**, **0 double confirmation**.
@@ -23,12 +23,12 @@ Fiche de référence chargée à la demande depuis [`SKILL.md`](../SKILL.md) *(p
   - Si le delta retourne `NO_EDITORIAL_CHANGES` avec `0` fichier auto-mis à jour (`<!-- AUTO:START/END -->`) **et** que l'atelier figure déjà dans `<architect_home>/ateliers.json`, répondre directement en 5–8 lignes **sans appeler `exit_plan_mode`**.
 
 ### Contenu de `exit_plan_mode(plan=...)`
-- Ne **jamais** recopier une spécification, un handoff ou un rapport d'audit complet dans `exit_plan_mode(plan=...)`.
-- Limiter `plan` à un résumé structurel concis (périmètre, fichiers ciblés, vérifications attendues) ; la matière détaillée reste dans `specs/`, `handoffs/` ou `audits/code/`.
+- Ne **jamais** recopier une spécification, une task ou un rapport d'audit complet dans `exit_plan_mode(plan=...)`.
+- Limiter `plan` à un résumé structurel concis (périmètre, fichiers ciblés, vérifications attendues) ; la matière détaillée reste dans `specs/`, `tasks/` ou `audits/code/`.
 
 ### Exploration multi-fichiers & cycle de session
 - Ne jamais charger une grappe de fichiers source des dépôts suivis dans la session racine ; après lecture du micro-delta, déléguer toute exploration multi-fichiers lecture seule à un sous-agent dédié (`research`) avec périmètre borné.
-- Après production d'un lot de `handoffs`, suggérer à l'utilisateur `/compact` ou l'ouverture d'une nouvelle session pour préserver le budget contexte.
+- Après production d'un lot de `tasks`, suggérer à l'utilisateur `/compact` ou l'ouverture d'une nouvelle session pour préserver le budget contexte.
 
 ## 3. Callbacks Bridge, `--ack-editorial` & clôture Git / install
 
@@ -43,7 +43,7 @@ Fiche de référence chargée à la demande depuis [`SKILL.md`](../SKILL.md) *(p
 Respecter strictement ces 4 étapes en fin de cycle :
 1. **Retours & vérifications (*fail-closed* global) :** confirmer que le plan/spec est validé, la revue propre, les retours Bridge clos (`0` job actif) et **100 %** des vérifications obligatoires vertes. Si une vérification échoue, régresse, si un dépôt n'est pas sur `dev` ou signale un blocage, **stopper avant tout `commit`/`push`** sur l'ensemble du lot et demander arbitrage humain.
 2. **Clôture auto sur `dev` & réinstallation écosystème :** exécuter automatiquement `git add`/`commit` sur `dev` + `git push origin dev` *(jamais `--force`)* + réinstallation coordonnée via `ecosystem_install.py --update --modules <...> --strict` (`python3` sous Linux/macOS, `python` sous Windows, plutôt qu'un `install.py --strict` isolé afin de maintenir la cohérence entre modules installés). Les opérations `merge dev -> main`, tag SemVer et release exigent un **accord humain explicite** *(un simple `/gravity-architect sync`, même avec `--commit`, ne fait ni `commit` sur les dépôts suivis ni `git push`)*.
-3. **Archivage atelier & `--ack-editorial` :** une fois les dépôts suivis propres et poussés sur `dev`, déplacer `specs/` → `specs/archive/` et `handoffs/` → `handoffs/archive/` (`done`), actualiser les pistes actives puis exécuter `sync_tracking.py --offline --ack-editorial --print-delta`.
+3. **Archivage atelier & `--ack-editorial` :** une fois les dépôts suivis propres et poussés sur `dev`, déplacer `specs/` → `specs/archive/` et `tasks/` → `tasks/archive/` (`done`), actualiser les pistes actives puis exécuter `sync_tracking.py --offline --ack-editorial --print-delta`.
 4. **Clôture `gravity-metrics` en toute dernière étape *(session racine d'atelier uniquement)* :** si `~/.gemini/config/plugins/gravity-metrics/scripts/cli.py` existe *(ou `%USERPROFILE%\.gemini\config\plugins\gravity-metrics\scripts\cli.py` sous Windows ; no-op silencieux — zéro erreur ni message — si absent)*, clore la capture de la session racine courante :
    - `python3 ~/.gemini/config/plugins/gravity-metrics/scripts/cli.py archive <conversation_id> -l "<slug>" --workspace .` *(sous Windows : `python` sur le chemin `%USERPROFILE%\...`)*
    - Si une release (`merge dev -> main`, tag SemVer ou push `main`/tags) intervient un tour plus tard dans la **même** conversation déjà scellée, ré-exécuter avec `--update-sealed`.
@@ -58,7 +58,7 @@ Respecter strictement ces 4 étapes en fin de cycle :
 
 ## 5. Onboarding sur workspace vide (greenfield)
 
-- **Détection préalable (`./projects.json` absent) :** avant `sync`, `status`, `spec`, `handoff` ou `add`, vérifier que `./projects.json` existe dans le dossier courant (ou dans un sous-dossier atelier unique dans `.`). Ne **jamais** appeler `sync_tracking.py` en aveugle et ne pas confondre un dossier vide avec `<architect_home>/projects.json` : basculer directement sur le flux `init` guidé.
+- **Détection préalable (`./projects.json` absent) :** avant `sync`, `status`, `spec`, `task` ou `add`, vérifier que `./projects.json` existe dans le dossier courant (ou dans un sous-dossier atelier unique dans `.`). Ne **jamais** appeler `sync_tracking.py` en aveugle et ne pas confondre un dossier vide avec `<architect_home>/projects.json` : basculer directement sur le flux `init` guidé.
 - **Découverte & choix en 1 seul `ask_question` :** exécuter `init_workspace.py --workspace . --discover --json` (CWD seul). Si `candidates: []`, poser **1 seul `ask_question`** proposant :
   1. *(a)* Initialiser un atelier vide (`0` projet),
   2. *(b)* Scanner le dossier parent `../` (`--scan-dir ../`),

@@ -73,11 +73,19 @@ class TestInitAndInstall(unittest.TestCase):
             self.assertIn("AGENTS.md", res["created"])
             self.assertIn("ECOSYSTEM.md", res["created"])
             self.assertIn("projects.json", res["created"])
+            self.assertIn("tasks/_TEMPLATE.md", res["created"])
+            self.assertIn("tasks/archive/.gitkeep", res["created"])
+            self.assertFalse((ws / "handoffs").exists())
             self.assertIn("tracking/projects/web.md", res["created"])
             self.assertIn("tracking/projects/api.md", res["created"])
+            card_txt = (ws / "tracking" / "projects" / "web.md").read_text(encoding="utf-8")
+            self.assertIn("Installé local", card_txt)
+            self.assertIn("<!-- AUTO:START:project-tasks:web -->", card_txt)
+            self.assertIn("<!-- AUTO:END:project-tasks:web -->", card_txt)
 
             cfg = json.loads((ws / "projects.json").read_text(encoding="utf-8"))
             self.assertEqual(cfg["schema_version"], 5)
+            self.assertIsNone(cfg.get("post_commit_install_cmd"))
             self.assertEqual(cfg["workspace_name"], "Atelier Test")
             self.assertEqual(cfg["default_preset"], "generic")
             self.assertEqual([p["id"] for p in cfg["projects"]], ["web", "api"])
@@ -147,6 +155,20 @@ class TestInitAndInstall(unittest.TestCase):
             validate.validate_plugin(bad_mod_plug, missing_mod_rep)
             self.assertFalse(missing_mod_rep.ok(strict=True))
             self.assertTrue(any("config/module.json" in e for e in missing_mod_rep.errors))
+
+            bad_cfg_plug = Path(tmp) / "bad-cfg-plugin"
+            shutil.copytree(PLUGIN_ROOT, bad_cfg_plug, ignore=shutil.ignore_patterns("__pycache__", "*.pyc"))
+            tpl_cfg_path = bad_cfg_plug / "templates" / "projects.json"
+            tpl_cfg = json.loads(tpl_cfg_path.read_text(encoding="utf-8"))
+            tpl_cfg["post_commit_install_cmd"] = 123
+            tpl_cfg["verify_commands"] = ["pytest", 42]
+            tpl_cfg_path.write_text(json.dumps(tpl_cfg), encoding="utf-8")
+            cfg_rep = validate.Report()
+            validate.validate_plugin(bad_cfg_plug, cfg_rep)
+            self.assertFalse(cfg_rep.ok(strict=True))
+            cfg_joined = " | ".join(cfg_rep.errors)
+            self.assertIn("post_commit_install_cmd", cfg_joined)
+            self.assertIn("verify_commands", cfg_joined)
 
     def test_install_copy_check_dry_run_install_upgrade_and_uninstall(self) -> None:
         self.assertEqual(install.PLUGIN_SOURCE, REPO_ROOT / "plugin")

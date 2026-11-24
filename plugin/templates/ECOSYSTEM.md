@@ -1,7 +1,7 @@
 # Tableau de bord — {{WORKSPACE_NAME}}
 
 <!-- AUTO:START:ecosystem-meta -->
-- **Atelier :** dépôt courant *(lecture seule stricte sur les dépôts suivis)*
+- **Espace de conception :** atelier courant *(lecture seule stricte sur les dépôts suivis)*
 - **Dernier snapshot :** [`tracking/snapshots/ecosystem_snapshot.md`](tracking/snapshots/ecosystem_snapshot.md)
 - **Charte :** [`AGENTS.md`](AGENTS.md) · **Archives :** [`archives/README.md`](archives/README.md)
 <!-- AUTO:END:ecosystem-meta -->
@@ -26,12 +26,12 @@
 
 ---
 
-## 3. Spécifications & Handoffs
+## 3. Spécifications & Tasks
 
 <!-- AUTO:START:ecosystem-artifacts -->
 - **Spécifications actives (`specs/`) :** aucune *(modèle : [`specs/_TEMPLATE.md`](specs/_TEMPLATE.md))*.
-- **Handoffs en attente (`handoffs/`) :** aucun *(modèle : [`handoffs/_TEMPLATE.md`](handoffs/_TEMPLATE.md))*.
-- **Handoffs archivés (`handoffs/archive/`) :** aucun pour le moment.
+- **Tasks en attente (`tasks/`) :** aucune *(modèle : [`tasks/_TEMPLATE.md`](tasks/_TEMPLATE.md))*.
+- **Tasks archivées (`tasks/archive/`) :** aucune pour le moment.
 <!-- AUTO:END:ecosystem-artifacts -->
 
 ---

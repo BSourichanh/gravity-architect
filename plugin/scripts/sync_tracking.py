@@ -56,7 +56,7 @@ from core.renderers import (  # noqa: E402
     apply_auto_doc_updates, build_ecosystem_blocks as _build_ecosystem_blocks, format_delta_for_stdout,
     format_dev_branch_cell as _format_dev_branch_cell, format_installed_cell as _format_installed_cell,
     format_installed_plugin_badge as _format_installed_plugin_badge, format_main_release_cell as _format_main_release_cell,
-    format_project_handoffs_block as _format_project_handoffs_block, format_wip_cell as _format_wip_cell,
+    format_project_tasks_block as _format_project_tasks_block, format_wip_cell as _format_wip_cell,
     persist_sync_outputs as _persist_sync_outputs, render_delta_markdown, render_ecosystem_snapshot_markdown,
     replace_auto_block,
 )

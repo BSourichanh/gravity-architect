@@ -482,6 +482,7 @@ def compute_delta_with_state(
         "projects": project_deltas,
         "watches": watch_deltas,
         "antigravity": ag_watch.get("surfaces", {}),
+        "artifacts": curr_snapshot.get("artifacts") or {},
     }
 
     any_project_auto_acked = any(

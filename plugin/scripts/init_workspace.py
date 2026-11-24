@@ -152,7 +152,7 @@ def init_workspace(
     agents_tpl = (templates_dir / "AGENTS.md").read_text(encoding="utf-8")
     eco_tpl = (templates_dir / "ECOSYSTEM.md").read_text(encoding="utf-8").replace("{{WORKSPACE_NAME}}", resolved_name)
     spec_tpl = (templates_dir / "spec-template.md").read_text(encoding="utf-8")
-    handoff_tpl = (templates_dir / "handoff-template.md").read_text(encoding="utf-8")
+    task_tpl = (templates_dir / "task-template.md").read_text(encoding="utf-8")
     card_tpl = (templates_dir / "project-card-template.md").read_text(encoding="utf-8")
     impact_tpl = (templates_dir / "impact-template.md").read_text(encoding="utf-8")
     archives_readme = (templates_dir / "archives-readme.md").read_text(encoding="utf-8")
@@ -187,8 +187,8 @@ def init_workspace(
         (ws_root / "projects.json", json.dumps(cfg, indent=2, ensure_ascii=False) + "\n"),
         (ws_root / "specs" / "_TEMPLATE.md", spec_tpl),
         (ws_root / "specs" / "archive" / ".gitkeep", ""),
-        (ws_root / "handoffs" / "_TEMPLATE.md", handoff_tpl),
-        (ws_root / "handoffs" / "archive" / ".gitkeep", ""),
+        (ws_root / "tasks" / "_TEMPLATE.md", task_tpl),
+        (ws_root / "tasks" / "archive" / ".gitkeep", ""),
         (ws_root / "tracking" / "projects" / "_TEMPLATE.md", card_tpl),
         (ws_root / "tracking" / "snapshots" / ".gitkeep", ""),
         (ws_root / "archives" / "README.md", archives_readme),

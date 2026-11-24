@@ -3,7 +3,7 @@
 - **Date :** YYYY-MM-DD
 - **Statut :** `draft` | `validated` | `superseded`
 - **Projets impactés :** `<projet-1>` | `<projet-2>`
-- **Handoffs :** *(liens relatifs vers `../handoffs/...`)*
+- **Tasks :** *(liens relatifs vers `../tasks/...`)*
 
 ---
 
@@ -25,5 +25,5 @@
 ## 5. Impacts & Invariants vérifiés
 - Contrôle effectué contre les fiches projet dans [`tracking/projects/`](../tracking/projects/).
 
-## 6. Découpage en handoffs
-1. [`YYYY-MM-DD-<projet>-<slug>.md`](../handoffs/) — *Résumé du lot.*
+## 6. Découpage en tasks (vagues)
+1. [`YYYY-MM-DD-<projet>-<slug>.md`](../tasks/) — *Vague 1 — Résumé du lot.*
