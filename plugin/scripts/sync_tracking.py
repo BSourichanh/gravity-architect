@@ -44,7 +44,7 @@ from core.io_utils import (  # noqa: E402
     editorial_prose_sha256 as _editorial_prose_sha256, format_project_display_path as _format_project_display_path,
     has_install_audit as _has_install_audit, is_machine_absolute_path as _is_machine_absolute_path, load_config,
     parse_artifact_file as _parse_artifact_file, parse_semver_tuple as _parse_semver_tuple,
-    read_json_safe as _read_json_safe, resolve_public_mode, resolve_workspace_root, run_readonly_cmd,
+    read_json_safe as _read_json_safe, register_atelier, resolve_public_mode, resolve_workspace_root, run_readonly_cmd,
     sanitize_markdown_paths as _sanitize_markdown_paths, scan_md_dir as _scan_md_dir,
     snapshot_watches_map as _snapshot_watches_map, strip_sync_line as _strip_sync_line,
     strip_volatile_json as _strip_volatile_json, strip_volatile_md as _strip_volatile_md,
@@ -170,6 +170,7 @@ def run_sync(
             resolved_concept_root, snapshots_dir, editorial_state_path, watches_data,
             full_snapshot, delta, delta_md, next_editorial_state, effective_public=effective_public, mask_pairs=mask_pairs,
         )
+        register_atelier(resolved_concept_root, workspace_name=str(cfg.get("workspace_name") or ""))
     return full_snapshot, delta
 
 

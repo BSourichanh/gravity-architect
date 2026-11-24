@@ -7,7 +7,9 @@ import contextlib
 from datetime import datetime, timedelta, timezone
 import io
 import json
+import os
 from pathlib import Path
+import re
 import shutil
 import subprocess
 import sys
@@ -15,11 +17,12 @@ import tempfile
 import unittest
 from unittest import mock
 
-PLUGIN_SCRIPTS = (
-    Path(__file__).resolve().parent.parent / "plugin" / "scripts"
-)
+PLUGIN_ROOT = Path(__file__).resolve().parent.parent / "plugin"
+PLUGIN_SCRIPTS = PLUGIN_ROOT / "scripts"
+sys.path.insert(0, str(PLUGIN_ROOT))
 sys.path.insert(0, str(PLUGIN_SCRIPTS))
 
+from core import io_utils  # noqa: E402
 import sync_tracking  # noqa: E402
 
 
@@ -147,6 +150,18 @@ def _init_demo_repo(repo: Path, compliant: bool = False) -> None:
 
 
 class TestSyncTracking(unittest.TestCase):
+    def setUp(self) -> None:
+        self._reg_tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._reg_tmp.cleanup)
+        self._arch_home = Path(self._reg_tmp.name) / "architect-home"
+        env_patch = mock.patch.dict(
+            os.environ,
+            {"GRAVITY_ARCHITECT_HOME": str(self._arch_home)},
+        )
+        env_patch.start()
+        self.addCleanup(env_patch.stop)
+        os.environ.pop("GRAVITY_ARCHITECT_SKIP_REGISTRY", None)
+
     def test_resolve_workspace_root_direct_subfolder_env_and_ambiguity(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -1419,6 +1434,163 @@ class TestSyncTracking(unittest.TestCase):
                 max_stdout_bytes=90,
             )
             self.assertLessEqual(len(tiny_out.encode("utf-8")), 90)
+
+    def test_register_atelier_mru_dedup_cap_prune_corrupt_symlinks_and_opt_out(self) -> None:
+        def _make_atelier(parent: Path, slug: str, name: str | None = None) -> Path:
+            ws = parent / slug
+            ws.mkdir(parents=True, exist_ok=True)
+            cfg = {"schema_version": 5, "projects": [], "watches": []}
+            if name is not None:
+                cfg["workspace_name"] = name
+            (ws / "projects.json").write_text(json.dumps(cfg) + "\n", encoding="utf-8")
+            (ws / "ECOSYSTEM.md").write_text("# Eco\n", encoding="utf-8")
+            return ws
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            arch_home = root / "arch-home"
+            reg_path = io_utils.resolve_ateliers_registry_path(architect_home=arch_home)
+            self.assertEqual(reg_path, arch_home.resolve() / "ateliers.json")
+
+            # Opt-out GRAVITY_ARCHITECT_SKIP_REGISTRY=1
+            ws_a = _make_atelier(root, "ws-a", name="Atelier A")
+            self.assertFalse(
+                io_utils.register_atelier(
+                    ws_a, architect_home=arch_home, env={"GRAVITY_ARCHITECT_SKIP_REGISTRY": "1"}
+                )
+            )
+            self.assertFalse(reg_path.exists())
+
+            # Rejet si marqueurs absents ou non-dossier
+            incomplete = root / "incomplete"
+            incomplete.mkdir()
+            (incomplete / "projects.json").write_text("{}\n", encoding="utf-8")
+            self.assertFalse(io_utils.register_atelier(incomplete, architect_home=arch_home, env={}))
+            not_dir = root / "file.txt"
+            not_dir.write_text("x\n", encoding="utf-8")
+            self.assertFalse(io_utils.register_atelier(not_dir, architect_home=arch_home, env={}))
+
+            # Création schema_version=1, lecture workspace_name depuis projects.json et format UTC
+            self.assertTrue(io_utils.register_atelier(ws_a, architect_home=arch_home, env={}))
+            payload1 = json.loads(reg_path.read_text(encoding="utf-8"))
+            self.assertEqual(payload1["schema_version"], 1)
+            self.assertEqual(len(payload1["ateliers"]), 1)
+            self.assertEqual(payload1["ateliers"][0]["workspace_path"], str(ws_a.resolve()))
+            self.assertEqual(payload1["ateliers"][0]["workspace_name"], "Atelier A")
+            self.assertRegex(payload1["ateliers"][0]["updated_at"], r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$")
+
+            # Ordre MRU & déduplication
+            ws_b = _make_atelier(root, "ws-b", name="Atelier B")
+            self.assertTrue(io_utils.register_atelier(ws_b, architect_home=arch_home, env={}))
+            self.assertTrue(io_utils.register_atelier(ws_a, workspace_name="Atelier A2", architect_home=arch_home, env={}))
+            payload2 = json.loads(reg_path.read_text(encoding="utf-8"))
+            self.assertEqual(
+                [a["workspace_path"] for a in payload2["ateliers"]],
+                [str(ws_a.resolve()), str(ws_b.resolve())],
+            )
+            self.assertEqual(payload2["ateliers"][0]["workspace_name"], "Atelier A2")
+
+            # Nettoyage paresseux des entrées obsolètes (ECOSYSTEM.md supprimé)
+            (ws_b / "ECOSYSTEM.md").unlink()
+            ws_c = _make_atelier(root, "ws-c", name="Atelier C")
+            self.assertTrue(io_utils.register_atelier(ws_c, architect_home=arch_home, env={}))
+            payload3 = json.loads(reg_path.read_text(encoding="utf-8"))
+            self.assertEqual(
+                [a["workspace_path"] for a in payload3["ateliers"]],
+                [str(ws_c.resolve()), str(ws_a.resolve())],
+            )
+
+            # Plafond à MAX_REGISTERED_ATELIERS = 20
+            all_ws = [_make_atelier(root, f"cap-{i:02d}", name=f"Cap {i}") for i in range(22)]
+            for w in all_ws:
+                self.assertTrue(io_utils.register_atelier(w, architect_home=arch_home, env={}))
+            payload_cap = json.loads(reg_path.read_text(encoding="utf-8"))
+            self.assertEqual(len(payload_cap["ateliers"]), 20)
+            self.assertEqual(payload_cap["ateliers"][0]["workspace_path"], str(all_ws[-1].resolve()))
+            cap_paths = {a["workspace_path"] for a in payload_cap["ateliers"]}
+            self.assertNotIn(str(all_ws[0].resolve()), cap_paths)
+            self.assertNotIn(str(all_ws[1].resolve()), cap_paths)
+
+            # Récupération sur ateliers.json corrompu
+            reg_path.write_text("{corrupt json", encoding="utf-8")
+            self.assertTrue(io_utils.register_atelier(ws_a, architect_home=arch_home, env={}))
+            recovered = json.loads(reg_path.read_text(encoding="utf-8"))
+            self.assertEqual(recovered["schema_version"], 1)
+            self.assertEqual([a["workspace_path"] for a in recovered["ateliers"]], [str(ws_a.resolve())])
+
+            # Rejet symlinks (cible atelier, fichier marqueur, architect_home, ateliers.json)
+            sym_ws = root / "sym-ws"
+            sym_ws.symlink_to(ws_a, target_is_directory=True)
+            self.assertFalse(io_utils.register_atelier(sym_ws, architect_home=arch_home, env={}))
+
+            ws_sym_file = root / "ws-sym-file"
+            ws_sym_file.mkdir()
+            (ws_sym_file / "projects.json").write_text("{}\n", encoding="utf-8")
+            (ws_sym_file / "ECOSYSTEM.md").symlink_to(ws_a / "ECOSYSTEM.md")
+            self.assertFalse(io_utils.register_atelier(ws_sym_file, architect_home=arch_home, env={}))
+
+            sym_arch = root / "sym-arch"
+            sym_arch.symlink_to(arch_home, target_is_directory=True)
+            self.assertFalse(io_utils.register_atelier(ws_a, architect_home=sym_arch, env={}))
+
+            arch_sym_file = root / "arch-sym-file"
+            arch_sym_file.mkdir()
+            (arch_sym_file / "ateliers.json").symlink_to(reg_path)
+            self.assertFalse(io_utils.register_atelier(ws_a, architect_home=arch_sym_file, env={}))
+
+            # Best-effort sur erreur d'écriture
+            with mock.patch.object(io_utils, "write_utf8", side_effect=OSError("disk full")):
+                self.assertFalse(io_utils.register_atelier(ws_a, architect_home=arch_home, env={}))
+
+            # Invariant CLI : resolve_workspace_root() ne se replie jamais sur ateliers.json
+            empty_cwd = root / "empty-cwd"
+            empty_cwd.mkdir()
+            with self.assertRaises(FileNotFoundError):
+                sync_tracking.resolve_workspace_root(
+                    cwd=empty_cwd,
+                    env={"GRAVITY_ARCHITECT_HOME": str(arch_home)},
+                    home_dir=root / "isolated-home",
+                )
+
+    def test_run_sync_registers_atelier_only_when_not_dry_run(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            ws = root / "atelier"
+            (ws / "tracking" / "projects").mkdir(parents=True)
+            (ws / "AGENTS.md").write_text("# Architect\n", encoding="utf-8")
+            (ws / "ECOSYSTEM.md").write_text(
+                "# Eco\n"
+                "<!-- AUTO:START:ecosystem-meta -->\n<!-- AUTO:END:ecosystem-meta -->\n"
+                "<!-- AUTO:START:ecosystem-projects -->\n<!-- AUTO:END:ecosystem-projects -->\n"
+                "<!-- AUTO:START:ecosystem-watches -->\n<!-- AUTO:END:ecosystem-watches -->\n"
+                "<!-- AUTO:START:ecosystem-artifacts -->\n<!-- AUTO:END:ecosystem-artifacts -->\n"
+                "<!-- AUTO:START:ecosystem-hygiene -->\n<!-- AUTO:END:ecosystem-hygiene -->\n",
+                encoding="utf-8",
+            )
+            cfg_path = ws / "projects.json"
+            cfg_path.write_text(
+                json.dumps(
+                    {
+                        "schema_version": 5,
+                        "workspace_name": "Atelier Sync",
+                        "default_preset": "generic",
+                        "projects": [],
+                        "watches": [],
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            reg_path = self._arch_home / "ateliers.json"
+            sync_tracking.run_sync(config_path=cfg_path, concept_root=ws, offline=True, dry_run=True)
+            self.assertFalse(reg_path.exists())
+
+            sync_tracking.run_sync(config_path=cfg_path, concept_root=ws, offline=True, dry_run=False)
+            self.assertTrue(reg_path.is_file())
+            data = json.loads(reg_path.read_text(encoding="utf-8"))
+            self.assertEqual(len(data["ateliers"]), 1)
+            self.assertEqual(data["ateliers"][0]["workspace_path"], str(ws.resolve()))
+            self.assertEqual(data["ateliers"][0]["workspace_name"], "Atelier Sync")
 
 
 if __name__ == "__main__":

@@ -65,7 +65,7 @@ class TestCoreStructureAndFacades(unittest.TestCase):
             "fetch_url_text", "fetch_antigravity_changelog", "render_surface_markdown",
             "render_ecosystem_snapshot_markdown", "compute_delta_with_state", "compute_delta",
             "render_delta_markdown", "format_delta_for_stdout", "replace_auto_block",
-            "apply_auto_doc_updates", "run_sync", "build_parser", "main",
+            "apply_auto_doc_updates", "run_sync", "build_parser", "main", "register_atelier",
             "_parse_semver_tuple", "_compare_cli_versions", "_build_ecosystem_blocks",
             "_format_project_handoffs_block", "shutil", "datetime",
         )
@@ -76,7 +76,7 @@ class TestCoreStructureAndFacades(unittest.TestCase):
             "PROJECT_ID_RE", "PRODUCT_MANIFEST_FILES", "ANTIGRAVITY_CHANGELOG_URL",
             "ANTIGRAVITY_IMPACT_BUDGET", "ANTIGRAVITY_WATCH_SURFACES",
             "inspect_project_dir", "discover_repositories", "init_workspace",
-            "add_projects_to_workspace", "build_parser", "main",
+            "add_projects_to_workspace", "build_parser", "main", "register_atelier",
             "_deploy_file", "_compute_portable_path", "_parse_target_spec",
             "_parse_project_specs", "_parse_watch_urls", "_build_antigravity_watch",
             "run_sync",

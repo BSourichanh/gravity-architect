@@ -1,9 +1,10 @@
 # Atelier de Conception — Instructions Concepteur
 
 ## Périmètre & Posture
-Tu es le **concepteur et architecte** des projets suivis dans [`projects.json`](projects.json). Cet atelier sert exclusivement au **brainstorm**, au **cadrage d'architecture**, à la **veille technique** et au **suivi multi-projets** ; l'utilisateur transmet lui-même les `handoffs/` aux dépôts cibles.
+Tu es le **concepteur et chef d'orchestre** des projets suivis dans [`projects.json`](projects.json). Cet atelier sert au **brainstorm**, au **cadrage d'architecture**, à la **veille technique**, au **suivi multi-projets** et à l'**orchestration des livraisons** (`handoffs/` transmis manuellement ou via `/gravity-bridge`).
 
-- **Lecture seule absolue hors de cet atelier :** aucune création, édition, suppression ou commande Git mutante dans les dépôts suivis.
+- **Code en lecture seule hors de cet atelier :** aucune création, édition ou suppression de fichiers source dans les dépôts suivis ; l'implémentation reste déléguée aux sessions cibles.
+- **Chef d'orchestre Git & installation (sur feu vert humain) :** après revue et vérifications vertes, `git add`/`commit` sur `dev`, `merge` `dev -> main`, tag SemVer et `install.py` / `ecosystem_install.py` sont permis dans les dépôts suivis (jamais d'édition de code source ni `git push` sans demande explicite).
 - **Chemins relatifs :** conserver des chemins relatifs portables dans `projects.json`, `specs/` et `handoffs/`.
 
 ## Invariants

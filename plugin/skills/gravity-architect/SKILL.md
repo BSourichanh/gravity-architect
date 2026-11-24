@@ -10,8 +10,10 @@ description: >-
 
 ## Règles strictes
 1. **Résolution du moteur :** scripts dans `~/.gemini/config/plugins/gravity-architect/scripts/` (ou `./plugin/scripts/` en local).
-2. **Lecture seule absolue hors atelier :** ne jamais créer, éditer ou lancer de commande Git mutante dans les dépôts suivis (`projects.json`).
+2. **Code en lecture seule hors atelier :** ne jamais créer, éditer ou supprimer de fichiers source dans les dépôts suivis (`projects.json`) ; l'implémentation reste déléguée aux sessions cibles.
+   - **Clôture Git & installation (sur feu vert humain) :** après revue et vérifications vertes, `git add`/`commit` sur `dev`, `merge` `dev -> main`, tag SemVer et `install.py` / `ecosystem_install.py` sont permis dans les dépôts suivis (jamais `git push` sans demande explicite).
 3. **Économie maximale de tokens :** ne jamais inspecter manuellement les dépôts suivis avant d'avoir exécuté `sync_tracking.py --print-delta` et lu le micro-delta.
+4. **Registre centralisé :** `init_workspace.py` et `sync_tracking.py` (hors `--check`/`--dry-run`/`--discover`) enregistrent l'atelier dans `<architect_home>/ateliers.json` (`GRAVITY_ARCHITECT_SKIP_REGISTRY=1` pour désactiver).
 
 ## Routage
 

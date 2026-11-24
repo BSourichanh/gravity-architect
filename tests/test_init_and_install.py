@@ -49,6 +49,18 @@ def _make_git_repo(repo: Path, branch: str = "main", dev_branch: bool = False) -
 
 
 class TestInitAndInstall(unittest.TestCase):
+    def setUp(self) -> None:
+        self._reg_tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._reg_tmp.cleanup)
+        self._arch_home = Path(self._reg_tmp.name) / "architect-home"
+        env_patch = mock.patch.dict(
+            os.environ,
+            {"GRAVITY_ARCHITECT_HOME": str(self._arch_home)},
+        )
+        env_patch.start()
+        self.addCleanup(env_patch.stop)
+        os.environ.pop("GRAVITY_ARCHITECT_SKIP_REGISTRY", None)
+
     def test_init_workspace_generic_and_idempotence(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             ws = Path(tmp) / "atelier"
@@ -594,6 +606,116 @@ class TestInitAndInstall(unittest.TestCase):
             self.assertIn("BOM", joined)
             self.assertIn("templates/AGENTS.md", joined)
             self.assertIn("AGENTS.md (racine)", joined)
+
+    def test_registry_on_init_add_discover_and_skip_env(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            reg_path = self._arch_home / "ateliers.json"
+            repo = root / "app-one"
+            _make_git_repo(repo, branch="main")
+
+            # 1. --discover n'écrit jamais dans ateliers.json
+            with contextlib.redirect_stdout(io.StringIO()):
+                rc_disc = init_workspace.main(
+                    ["--workspace", str(root), "--discover", "--scan-dir", str(root), "--json"]
+                )
+            self.assertEqual(rc_disc, 0)
+            self.assertFalse(reg_path.exists())
+
+            # 2. GRAVITY_ARCHITECT_SKIP_REGISTRY=1 bloque l'écriture
+            ws_skip = root / "ws-skip"
+            with mock.patch.dict(os.environ, {"GRAVITY_ARCHITECT_SKIP_REGISTRY": "1"}):
+                init_workspace.init_workspace(ws_skip, name="Atelier Ignoré")
+            self.assertFalse(reg_path.exists())
+
+            # 3. init_workspace + add_projects_to_workspace enregistrent l'atelier
+            ws = root / "ws-real"
+            init_workspace.init_workspace(ws, name="Atelier Réel")
+            self.assertTrue(reg_path.is_file())
+            data1 = json.loads(reg_path.read_text(encoding="utf-8"))
+            self.assertEqual(data1["schema_version"], 1)
+            self.assertEqual(len(data1["ateliers"]), 1)
+            self.assertEqual(data1["ateliers"][0]["workspace_path"], str(ws.resolve()))
+            self.assertEqual(data1["ateliers"][0]["workspace_name"], "Atelier Réel")
+
+            init_workspace.add_projects_to_workspace(ws, [str(repo)])
+            data2 = json.loads(reg_path.read_text(encoding="utf-8"))
+            self.assertEqual(len(data2["ateliers"]), 1)
+            self.assertEqual(data2["ateliers"][0]["workspace_path"], str(ws.resolve()))
+            self.assertEqual(data2["ateliers"][0]["workspace_name"], "Atelier Réel")
+
+    def test_init_workspace_idempotent_preserves_workspace_name_in_registry(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            ws = Path(tmp) / "gravity-studio"
+            reg_path = self._arch_home / "ateliers.json"
+
+            with contextlib.redirect_stdout(io.StringIO()):
+                rc_init = init_workspace.main(
+                    ["--workspace", str(ws), "--name", "Gravity Studio"]
+                )
+            self.assertEqual(rc_init, 0)
+            data1 = json.loads(reg_path.read_text(encoding="utf-8"))
+            self.assertEqual(data1["ateliers"][0]["workspace_name"], "Gravity Studio")
+
+            # Ré-exécution idempotente sans `name` ni `--name` -> préserve "Gravity Studio"
+            res_idemp = init_workspace.init_workspace(ws)
+            self.assertIn("projects.json", res_idemp["skipped"])
+            data2 = json.loads(reg_path.read_text(encoding="utf-8"))
+            self.assertEqual(data2["ateliers"][0]["workspace_name"], "Gravity Studio")
+
+            with contextlib.redirect_stdout(io.StringIO()):
+                rc_cli_idemp = init_workspace.main(["--workspace", str(ws)])
+            self.assertEqual(rc_cli_idemp, 0)
+            data3 = json.loads(reg_path.read_text(encoding="utf-8"))
+            self.assertEqual(data3["ateliers"][0]["workspace_name"], "Gravity Studio")
+
+            # Avec --force sans --name, projects.json est réécrit avec le défaut et le registre suit
+            init_workspace.init_workspace(ws, force=True)
+            data4 = json.loads(reg_path.read_text(encoding="utf-8"))
+            self.assertEqual(
+                data4["ateliers"][0]["workspace_name"],
+                init_workspace.DEFAULT_WORKSPACE_NAME,
+            )
+
+    def test_architect_posture_ro_code_vs_human_approved_closure_and_deploy(self) -> None:
+        rules_raw = (PLUGIN_ROOT / "rules" / "AGENTS.md").read_bytes()
+        tpl_raw = (PLUGIN_ROOT / "templates" / "AGENTS.md").read_bytes()
+        skill_raw = (PLUGIN_ROOT / "skills" / "gravity-architect" / "SKILL.md").read_bytes()
+
+        for label, raw, limit in (
+            ("rules/AGENTS.md", rules_raw, 513),
+            ("templates/AGENTS.md", tpl_raw, 2500),
+            ("SKILL.md", skill_raw, 6000),
+        ):
+            self.assertFalse(raw.startswith(b"\xef\xbb\xbf"), f"BOM dans {label}")
+            self.assertNotIn(b"\r\n", raw, f"CRLF dans {label}")
+            self.assertLessEqual(len(raw), limit, f"{label} dépasse {limit} o ({len(raw)})")
+
+        rules_txt = rules_raw.decode("utf-8")
+        self.assertIn("Code suivi RO", rules_txt)
+        self.assertIn("commit/release/install permis sur feu vert humain", rules_txt)
+
+        tpl_txt = tpl_raw.decode("utf-8")
+        self.assertIn("chef d'orchestre", tpl_txt)
+        self.assertIn("Code en lecture seule hors de cet atelier", tpl_txt)
+        self.assertIn("Chef d'orchestre Git & installation (sur feu vert humain)", tpl_txt)
+        self.assertIn("install.py", tpl_txt)
+        self.assertIn("ecosystem_install.py", tpl_txt)
+        self.assertIn("jamais d'édition de code source ni `git push` sans demande explicite", tpl_txt)
+
+        skill_txt = skill_raw.decode("utf-8")
+        self.assertIn("Code en lecture seule hors atelier", skill_txt)
+        self.assertIn("Clôture Git & installation (sur feu vert humain)", skill_txt)
+        self.assertIn("jamais `git push` sans demande explicite", skill_txt)
+        self.assertIn("lecture seule absolue", skill_txt)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            ws = Path(tmp) / "atelier-posture"
+            res = init_workspace.init_workspace(ws, name="Atelier Posture")
+            self.assertIn("AGENTS.md", res["created"])
+            deployed_raw = (ws / "AGENTS.md").read_bytes()
+            self.assertLessEqual(len(deployed_raw), 2500)
+            self.assertEqual(deployed_raw, tpl_raw)
 
 
 if __name__ == "__main__":

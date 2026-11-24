@@ -403,6 +403,9 @@ def _run_e2e_dry_run(root: Path, report: Report) -> None:
         env = dict(os.environ)
         env["PYTHONDONTWRITEBYTECODE"] = "1"
         env.pop("GRAVITY_ARCHITECT_WORKSPACE", None)
+        env.pop("GRAVITY_ARCHITECT_SKIP_REGISTRY", None)
+        arch_home = tmp_path / "architect-home"
+        env["GRAVITY_ARCHITECT_HOME"] = str(arch_home)
 
         p_init = subprocess.run(
             [
@@ -428,6 +431,26 @@ def _run_e2e_dry_run(root: Path, report: Report) -> None:
             report.error(f"Dry-run init_workspace.py échoué : {p_init.stderr or p_init.stdout}")
             return
 
+        registry_path = arch_home / "ateliers.json"
+        if not registry_path.is_file():
+            report.error("Dry-run init_workspace.py n'a pas créé architect-home/ateliers.json.")
+            return
+        try:
+            reg_raw_before = registry_path.read_text(encoding="utf-8")
+            reg_data = json.loads(reg_raw_before)
+        except Exception as exc:
+            report.error(f"Dry-run ateliers.json illisible : {exc}")
+            return
+        reg_paths = [
+            str(item.get("workspace_path") or "")
+            for item in (reg_data.get("ateliers") or [])
+            if isinstance(item, dict)
+        ]
+        if str(ws_dir.resolve()) not in reg_paths:
+            report.error("Dry-run ateliers.json ne contient pas l'atelier initialisé.")
+            return
+        reg_mtime_before = registry_path.stat().st_mtime_ns
+
         p_sync = subprocess.run(
             [
                 sys.executable,
@@ -452,6 +475,11 @@ def _run_e2e_dry_run(root: Path, report: Report) -> None:
             return
         if "EDITORIAL_UPDATE_REQUIRED" not in p_sync.stdout and "NO_EDITORIAL_CHANGES" not in p_sync.stdout:
             report.error(f"Sortie inattendue du dry-run sync_tracking.py : {p_sync.stdout!r}")
+        if (
+            registry_path.stat().st_mtime_ns != reg_mtime_before
+            or registry_path.read_text(encoding="utf-8") != reg_raw_before
+        ):
+            report.error("Dry-run sync_tracking.py --check a modifié ateliers.json.")
 
 
 def validate_plugin(root: Path, report: Report) -> None:

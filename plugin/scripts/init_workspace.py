@@ -41,6 +41,7 @@ from core.io_utils import (  # noqa: E402
     deploy_file as _deploy_file,
     humanize_id as _humanize_id,
     read_json_safe as _read_json_safe,
+    register_atelier,
     truncate_text as _truncate_text,
     write_utf8 as _write_utf8,
 )
@@ -62,10 +63,13 @@ from sync_tracking import (  # noqa: E402
 )
 
 
+DEFAULT_WORKSPACE_NAME = "Mon Atelier Projets"
+
+
 def init_workspace(
     workspace: Path,
     *,
-    name: str = "Mon Atelier Projets",
+    name: str | None = None,
     preset: str | None = None,
     projects: list[tuple[str, str] | tuple[str, str, Path] | str] | None = None,
     watches: list[str] | None = None,
@@ -131,8 +135,11 @@ def init_workspace(
     updated: list[str] = []
     skipped: list[str] = []
 
+    explicit_name = name is not None and bool(str(name).strip())
+    resolved_name = str(name).strip() if explicit_name else DEFAULT_WORKSPACE_NAME
+
     agents_tpl = (templates_dir / "AGENTS.md").read_text(encoding="utf-8")
-    eco_tpl = (templates_dir / "ECOSYSTEM.md").read_text(encoding="utf-8").replace("{{WORKSPACE_NAME}}", name)
+    eco_tpl = (templates_dir / "ECOSYSTEM.md").read_text(encoding="utf-8").replace("{{WORKSPACE_NAME}}", resolved_name)
     spec_tpl = (templates_dir / "spec-template.md").read_text(encoding="utf-8")
     handoff_tpl = (templates_dir / "handoff-template.md").read_text(encoding="utf-8")
     card_tpl = (templates_dir / "project-card-template.md").read_text(encoding="utf-8")
@@ -142,7 +149,7 @@ def init_workspace(
     audit_code_tpl = (templates_dir / "audit-code-template.md").read_text(encoding="utf-8")
 
     cfg = json.loads((templates_dir / "projects.json").read_text(encoding="utf-8"))
-    cfg["workspace_name"] = name
+    cfg["workspace_name"] = resolved_name
     if public_mode:
         cfg["privacy"] = {"public_mode": True}
 
@@ -188,6 +195,8 @@ def init_workspace(
     for dst, content in targets:
         buckets[_deploy_file(dst, content, force=force)].append(dst.relative_to(ws_root).as_posix())
 
+    registry_name = "" if ("projects.json" in skipped and not explicit_name) else resolved_name
+    register_atelier(ws_root, workspace_name=registry_name)
     return {"workspace": str(ws_root), "created": created, "updated": updated, "skipped": skipped}
 
 
@@ -261,6 +270,7 @@ def add_projects_to_workspace(
             _write_utf8(card_path, _render_project_card(card_tpl, entry))
             cards_created.append(rel)
 
+    register_atelier(ws_root, workspace_name=str(cfg.get("workspace_name") or ""))
     return {
         "workspace": str(ws_root),
         "added": [entry["id"] for entry in pending_entries],
@@ -277,7 +287,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--scan-dir", type=Path, default=None, help="Dossier parent à scanner pour --discover (défaut : --workspace)")
     parser.add_argument("--json", action="store_true", help="Sortie JSON structurée (--discover, initialisation et erreurs)")
     parser.add_argument("--add", action="append", default=[], help="Ajoute un projet (<chemin> ou id=chemin) à un atelier existant (répétable)")
-    parser.add_argument("--name", default="Mon Atelier Projets", help="Nom affiché de l'atelier dans ECOSYSTEM.md et projects.json")
+    parser.add_argument("--name", default=None, help=f"Nom affiché de l'atelier dans ECOSYSTEM.md et projects.json (défaut : {DEFAULT_WORKSPACE_NAME})")
     parser.add_argument("--preset", choices=("generic", "antigravity-plugin"), default=None, help="Surcharge explicite du preset des projets (sinon auto-détecté)")
     parser.add_argument("--project", action="append", default=[], help="Déclare un projet initial au format id=chemin ou <chemin> (répétable)")
     parser.add_argument("--watch", action="append", choices=("antigravity",), default=[], help="Active un preset de veille officiel (répétable : antigravity)")

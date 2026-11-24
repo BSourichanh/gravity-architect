@@ -31,7 +31,9 @@ Plugin Antigravity générique (**100 % bibliothèque standard Python 3**) organ
 
 ## Suivi multi-projets, contrat module & mode public
 
+- **Posture Architecte (Code RO & clôture sur feu vert) :** le code source des dépôts suivis reste strictement en lecture seule (implémentation déléguée aux sessions cibles) ; après revue et vérifications vertes, les opérations de clôture (`git add`/`commit` sur `dev`, `merge` `dev -> main`, tag SemVer, `install.py` / `ecosystem_install.py`) sont permises sur feu vert humain explicite, sans `git push` automatique.
 - **Contrat module Gravity :** `config/module.json` (`schema_version: 1`, `id: "architect"`) avec résolution centralisée `default_architect_home()` (`$GRAVITY_ARCHITECT_HOME` > `$GRAVITY_HOME/architect` > `~/.gemini/gravity/architect`), sans altérer la précédence atelier (`--workspace` > `$GRAVITY_ARCHITECT_WORKSPACE` > `.`).
+- **Registre centralisé (`<architect_home>/ateliers.json`) :** `init_workspace.py` (`init`, `--add`) et `sync_tracking.py` (hors `--check` / `--dry-run`) enregistrent automatiquement l'atelier valide (`projects.json` + `ECOSYSTEM.md`, ordre MRU, max `20` entrées, écriture atomique) dans `ateliers.json` (`schema_version: 1`). Définir `GRAVITY_ARCHITECT_SKIP_REGISTRY=1` pour désactiver l'écriture (ex. tests ou CI).
 - **Auto-détection manifeste plugin :** `plugin/plugin.json` d'abord, puis `{project_id}-plugin/plugin.json`, puis `plugin.json` (avec dérivation automatique de `validator_script`).
 - **Versions multi-formats :** `plugin.json`, `package.json`, `pyproject.toml`, `Cargo.toml`, `setup.cfg`, `VERSION` / `.txt` ou clé JSON personnalisée (`version_json_path`).
 - **Git branch-aware :** suivi `main` vs `dev`, dernier tag sur `main`, commits non tagués hors merges (`--no-merges`), `[Unreleased]` vs dernière release dans `CHANGELOG.md`, et WIP hors chemins runtime ignorés.

@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Centralized Atelier Registry (`<architect_home>/ateliers.json`):**
+  - Added `ATELIERS_REGISTRY_FILENAME`, `MAX_REGISTERED_ATELIERS = 20`, `resolve_ateliers_registry_path()`, and `register_atelier()` in `plugin/core/io_utils.py` (`schema_version: 1`, MRU ordering, canonical path deduplication, lazy stale-entry pruning, symlink rejection, corrupt-JSON recovery, atomic UTF-8/LF writes, and `GRAVITY_ARCHITECT_SKIP_REGISTRY=1` opt-out, without modifying `resolve_workspace_root()`).
+  - Integrated `register_atelier()` (with facade re-exports) into `init_workspace()`, `add_projects_to_workspace()`, and `run_sync(dry_run=False)` while skipping writes on `--discover` and `--check` / `--dry-run`.
+  - Updated `_run_e2e_dry_run()` in `plugin/scripts/validate.py` to isolate `GRAVITY_ARCHITECT_HOME` and verify `ateliers.json` creation on `init_workspace.py` and immutability on `sync_tracking.py --check`.
+  - Added isolated `unittest` coverage for `register_atelier()`, registry integration, and test-suite isolation from `~/.gemini/`.
+
+### Changed
+- **Architect Posture (Read-Only Source Code + Human-Approved Git/Release/Install Closure):**
+  - Updated `plugin/rules/AGENTS.md` (`<= 513 B`), `plugin/skills/gravity-architect/SKILL.md` (`<= 6 000 B`), and `plugin/templates/AGENTS.md` (`<= 2 500 B`) to strictly separate read-only source code in tracked repositories from human-approved closure operations (`git add`/`commit` on `dev`, `merge` `dev -> main`, SemVer tag, `install.py` / `ecosystem_install.py`, never automatic `git push`).
+  - Documented the updated posture in `README.md` and `plugin/README.md` and added regression coverage in `tests/test_init_and_install.py`.
+
+### Fixed
+- **Idempotent `init_workspace()` Registry Name:** preserved existing `workspace_name` from `projects.json` in `<architect_home>/ateliers.json` when `init_workspace()` is re-run idempotently without an explicit `--name` (`DEFAULT_WORKSPACE_NAME` fallback only on creation, `--force`, or explicit `--name`).
+
 ## [0.5.1] - 2026-11-24
 
 ### Added

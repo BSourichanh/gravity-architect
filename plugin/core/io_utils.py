@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
 import hashlib
 import json
 import os
@@ -12,6 +13,8 @@ import sys
 import tempfile
 
 SCHEMA_VERSION = 5
+ATELIERS_REGISTRY_FILENAME = "ateliers.json"
+MAX_REGISTERED_ATELIERS = 20
 
 DEFAULT_HOT_BUDGETS = {
     "AGENTS.md": 2500,
@@ -212,21 +215,100 @@ def truncate_text(text: str, max_len: int = 160) -> str:
     return cut.rstrip(" ,;:-") + "…"
 
 
-def default_architect_home(
-    *,
-    env: dict[str, str] | None = None,
-    home_dir: Path | None = None,
+def _raw_architect_home(
+    architect_home: Path | None = None, *, env: dict[str, str] | None = None, home_dir: Path | None = None
 ) -> Path:
-    """Résout le dossier centralisé Architect (`GRAVITY_ARCHITECT_HOME` > `GRAVITY_HOME/architect` > `~/.gemini/gravity/architect`)."""
+    if architect_home is not None:
+        return architect_home.expanduser()
     env_map = env if env is not None else os.environ
-    architect_env = str(env_map.get("GRAVITY_ARCHITECT_HOME") or "").strip()
-    if architect_env:
-        return Path(architect_env).expanduser().resolve()
-    gravity_env = str(env_map.get("GRAVITY_HOME") or "").strip()
-    if gravity_env:
-        return (Path(gravity_env).expanduser().resolve() / "architect").resolve()
-    base_home = (home_dir if home_dir is not None else Path.home()).expanduser().resolve()
-    return (base_home / ".gemini" / "gravity" / "architect").resolve()
+    for key, suffix in (("GRAVITY_ARCHITECT_HOME", None), ("GRAVITY_HOME", "architect")):
+        val = str(env_map.get(key) or "").strip()
+        if val:
+            base = Path(val).expanduser()
+            return (base / suffix) if suffix else base
+    base_home = (home_dir if home_dir is not None else Path.home()).expanduser()
+    return base_home / ".gemini" / "gravity" / "architect"
+
+
+def default_architect_home(*, env: dict[str, str] | None = None, home_dir: Path | None = None) -> Path:
+    """Résout le dossier centralisé Architect (`GRAVITY_ARCHITECT_HOME` > `GRAVITY_HOME/architect` > `~/.gemini/gravity/architect`)."""
+    return _raw_architect_home(env=env, home_dir=home_dir).resolve()
+
+
+def resolve_ateliers_registry_path(
+    architect_home: Path | None = None, env: dict[str, str] | None = None, home_dir: Path | None = None
+) -> Path:
+    """Résout le chemin du registre centralisé `<architect_home>/ateliers.json`."""
+    base = architect_home.expanduser().resolve() if architect_home is not None else default_architect_home(env=env, home_dir=home_dir)
+    return base / ATELIERS_REGISTRY_FILENAME
+
+
+def _is_valid_atelier_dir(workspace_dir: Path) -> bool:
+    """Vérifie qu'un dossier non symlink contient `projects.json` et `ECOSYSTEM.md` (non symlinks)."""
+    try:
+        if workspace_dir.is_symlink() or not workspace_dir.is_dir():
+            return False
+        cfg_file, eco_file = workspace_dir / "projects.json", workspace_dir / "ECOSYSTEM.md"
+        return not cfg_file.is_symlink() and cfg_file.is_file() and not eco_file.is_symlink() and eco_file.is_file()
+    except OSError:
+        return False
+
+
+def _merge_existing_ateliers(registry_path: Path, seen_keys: set[str], limit: int) -> list[dict[str, str]]:
+    merged: list[dict[str, str]] = []
+    raw_ateliers = (read_json_safe(registry_path) or {}).get("ateliers")
+    if not isinstance(raw_ateliers, list):
+        return merged
+    for item in raw_ateliers:
+        if len(merged) >= limit:
+            break
+        raw_p = str(item.get("workspace_path") or "").strip() if isinstance(item, dict) else ""
+        if not raw_p or not _is_valid_atelier_dir(cand_raw := Path(raw_p).expanduser()):
+            continue
+        cand_canonical = cand_raw.resolve()
+        cand_key = os.path.normcase(str(cand_canonical))
+        if cand_key in seen_keys:
+            continue
+        seen_keys.add(cand_key)
+        merged.append({
+            "workspace_path": str(cand_canonical),
+            "workspace_name": str(item.get("workspace_name") or "").strip(),
+            "updated_at": str(item.get("updated_at") or "").strip(),
+        })
+    return merged
+
+
+def register_atelier(
+    workspace_root: Path, *, workspace_name: str = "", architect_home: Path | None = None,
+    env: dict[str, str] | None = None, home_dir: Path | None = None,
+) -> bool:
+    """Enregistre l'atelier courant (MRU, max 20) dans `<architect_home>/ateliers.json` en best-effort."""
+    env_map = env if env is not None else os.environ
+    if str(env_map.get("GRAVITY_ARCHITECT_SKIP_REGISTRY") or "").strip() == "1":
+        return False
+
+    try:
+        ws_raw = workspace_root.expanduser()
+        if not _is_valid_atelier_dir(ws_raw):
+            return False
+        ws_canonical = ws_raw.resolve()
+        raw_home = _raw_architect_home(architect_home, env=env_map, home_dir=home_dir)
+        if any(p.is_symlink() for p in (raw_home / ATELIERS_REGISTRY_FILENAME, raw_home, raw_home.parent)):
+            return False
+        registry_path = resolve_ateliers_registry_path(architect_home, env=env_map, home_dir=home_dir)
+        if registry_path.is_symlink() or (registry_path.exists() and not registry_path.is_file()):
+            return False
+
+        resolved_name = str(workspace_name or "").strip() or str(
+            (read_json_safe(ws_canonical / "projects.json") or {}).get("workspace_name") or ""
+        ).strip()
+        now_utc = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        entries = [{"workspace_path": str(ws_canonical), "workspace_name": resolved_name, "updated_at": now_utc}]
+        entries.extend(_merge_existing_ateliers(registry_path, {os.path.normcase(str(ws_canonical))}, MAX_REGISTERED_ATELIERS - 1))
+        write_utf8(registry_path, json.dumps({"schema_version": 1, "ateliers": entries[:MAX_REGISTERED_ATELIERS]}, indent=2, ensure_ascii=False) + "\n")
+        return True
+    except (OSError, ValueError, TypeError):
+        return False
 
 
 def resolve_public_mode(cfg: dict | None) -> bool:

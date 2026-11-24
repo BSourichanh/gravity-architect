@@ -83,7 +83,9 @@ python plugin/scripts/sync_tracking.py --workspace ./mon-atelier --offline --ack
 
 Dans Antigravity, utilisez ensuite `/gravity-architect [init|add|sync|status|spec|handoff|archive|audit]` (voir [`plugin/README.md`](plugin/README.md)).
 
-### Découpage modulaire `plugin/core/` (`Unreleased`)
+### Posture Architecte, registre `ateliers.json` & découpage modulaire `plugin/core/` (`Unreleased`)
+- **Posture Architecte (Code RO + clôture sur feu vert) :** `plugin/rules/AGENTS.md`, `plugin/skills/gravity-architect/SKILL.md` et `plugin/templates/AGENTS.md` distinguent strictement la lecture seule sur le code source des dépôts suivis (implémentation déléguée aux sessions cibles) de la clôture Git/release/install (`git add`/`commit` sur `dev`, `merge` `dev -> main`, tag SemVer, `install.py` / `ecosystem_install.py`) autorisée après revue et feu vert humain explicite, sans jamais `git push` automatique.
+- **Registre centralisé (`<architect_home>/ateliers.json`) :** `init_workspace.py` (`init`, `--add`) et `sync_tracking.py` (hors `--check` / `--dry-run` et `--discover`) enregistrent automatiquement chaque atelier valide (`projects.json` + `ECOSYSTEM.md`, ordre MRU, max `20`, écriture atomique) dans `<architect_home>/ateliers.json` (`$GRAVITY_ARCHITECT_HOME` > `$GRAVITY_HOME/architect` > `~/.gemini/gravity/architect`) sans écrire dans le workspace cible. Opt-out via `GRAVITY_ARCHITECT_SKIP_REGISTRY=1` ; `resolve_workspace_root()` reste inchangé.
 - **Architecture SRP/DRY :** extraction des responsabilités cœur sous `plugin/core/` (`io_utils.py`, `discovery.py`, `git_collector.py`, `watches.py`, `delta.py`, `renderers.py`, tous ≤ 650 L, 100 % stdlib Python 3.10+, écriture atomique UTF-8 sans BOM / LF).
 - **Façades 100 % rétrocompatibles :** `plugin/scripts/sync_tracking.py` (≤ 250 L) et `plugin/scripts/init_workspace.py` (≤ 450 L) ré-exportent l'intégralité des symboles et options CLI existants.
 
