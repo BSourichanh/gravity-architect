@@ -8,13 +8,13 @@ description: >-
 
 # Gravity Architect — Atelier & Suivi Multi-Projets
 
-Détails (4 phases, Bridge, Plan Mode, callbacks, onboarding) : [workflows-and-hygiene.md](references/workflows-and-hygiene.md).
+Détails (4 phases, exécution native, Plan Mode, clôture, onboarding) : [workflows-and-hygiene.md](references/workflows-and-hygiene.md).
 
 ## Règles strictes
 1. **Moteur :** scripts dans `~/.gemini/config/plugins/gravity-architect/scripts/` (ou `./plugin/scripts/`).
-2. **Code en lecture seule hors atelier :** 0 édition de source dans les dépôts suivis (`projects.json`) ; implémentation déléguée aux sessions cibles.
-   - **Clôture Git & installation :** plan/spec validé, `0` job Bridge, revue propre et `100 %` vérifs vertes (*fail-closed* ; stopper avant `commit`/`push` si échec ou hors `dev`) → `git add`/`commit` `dev` + `git push origin dev` *(jamais `--force`)* + `ecosystem_install.py --update --modules <...> --strict` (`python3` POSIX, `python` Win, fin Validation uniquement plutôt qu'`install.py --strict`). `merge dev -> main`, tag et release sur accord humain explicite seul.
-3. **Hygiène tokens & Plan Mode :** `sync_tracking.py --print-delta` avant d'inspecter les dépôts ; déléguer l'exploration multi-fichiers à `research` RO ; 0 spec/task complète dans `exit_plan_mode(plan=...)` ; suggérer `/compact` après production des tasks.
+2. **Code en lecture seule hors atelier :** 0 édition de source dans les dépôts suivis (`projects.json`) ; implémentation en worktree isolé (`wave_runner.py` ou `/swarm`).
+   - **Clôture Git & installation :** plan/spec validé, vague terminée, revue propre et `100 %` vérifs vertes (*fail-closed* ; stopper avant `commit`/`push` si échec ou hors `dev`) → `git add`/`commit` `dev` + `git push origin dev` *(jamais `--force`)* + `ecosystem_install.py --update --modules <...> --strict` (`python3` POSIX, `python` Win, fin Validation seule). `merge dev -> main`, tag et release sur accord humain explicite seul.
+3. **Hygiène tokens & Plan Mode :** `sync_tracking.py --print-delta` avant inspection ; déléguer multi-fichiers à `research` RO ; 0 spec/task dans `exit_plan_mode(plan=...)` ; `/compact` post-tasks et racine `> 250k` tokens.
 4. **Registre :** `init_workspace.py` / `sync_tracking.py` (hors `--check`/`--dry-run`/`--discover`) inscrivent l'atelier dans `<architect_home>/ateliers.json` (`GRAVITY_ARCHITECT_SKIP_REGISTRY=1` opt-out).
 
 ## Routage
@@ -23,14 +23,14 @@ Détails (4 phases, Bridge, Plan Mode, callbacks, onboarding) : [workflows-and-h
 - **Vide :** état consultatif `PreInvocation` (`0` écriture, `0` capture `gravity-metrics`, via `atelier_status.py`).
 - **`"<instruction>"` :** cycle **4 phases** ([`workflows-and-hygiene.md`](references/workflows-and-hygiene.md) §6) :
   1. **Conception :** `research` RO + `/grill-me` + `/plan` (`specs/`).
-  2. **Planification :** ancres issues de `research` (`::`/`~L`) + `tasks/` + `core/waves.py --check-waves` + **1 checkpoint unique** via artefact `RequestFeedback=True` **et/ou `ask_question` explicite** *(bouton `Proceed` absent sur certaines surfaces)*.
-  3. **Production :** Bridge `batch_id` (`manage_thread(action="get_job")`, statut `rédigé, non déployé`) + mini-checkpoint `dev`.
-  4. **Validation :** `verify_commands` (`100 %` vertes, *fail-closed*) → commit/push `dev` → archive (`specs/archive/`, `tasks/archive/`, `--offline --ack-editorial`) → docs écosystème → réinstall fin Validation uniquement (`ecosystem_install.py --update --modules <...> --strict`) → récap → `gravity-metrics`.
+  2. **Planification :** ancres `research` (`::`/`~L`) + `tasks/` (`<= 5` code, `quick`|`standard`) + `core/waves.py --check-waves` + **1 checkpoint unique** (`RequestFeedback=True` **et/ou `ask_question`**, *`Proceed` absent sur certaines surfaces*).
+  3. **Production :** `run_workflow` (`wave_runner.py` `parallel` *fail-isolated*, worktrees, 0 `Planner` si `plan_file`, `quick`=Reviewer `flash` / `standard`=Reviewer `pro`, watchdog `15m`/`6m`, `apply_on_pass=True`, retour `<= 10` lignes/dépôt) ou `/swarm` + mini-checkpoint `dev` + `/compact` `> 250k`.
+  4. **Validation :** `verify_commands` (`100 %` vertes, *fail-closed*, ex. `audit_ecosystem.py --verify-parallel --strict`) → commit/push `dev` → archive (`specs/archive/`, `tasks/archive/`, `--offline --ack-editorial`) → docs → réinstall fin Validation (`ecosystem_install.py --update --modules <...> --strict`) → `gravity-metrics`.
 
 ### 1. `/gravity-architect init` *(onboarding guidé)*
 1. **Existant (`projects.json`) :** `init_workspace.py --workspace .` *(idempotent sans `--force`)* ; proposer `/gravity-architect add <chemin...>`.
 2. **Vierge :** `init_workspace.py --workspace . --discover --json` (CWD seul ; 0 scan `../` sans accord). Si `candidates: []`, **1 `ask_question`** : *(a) atelier vide (`0` projet)*, *(b) scanner `../`*, *(c) chemins directs*.
-3. **À `0` projet :** `init_workspace.py --workspace . --run-sync --offline` *(1 commande, sans `--ack-editorial`, nom dérivé sauf `--name` ; `public_mode`, `--watch-url`)*.
+3. **À `0` projet :** `init_workspace.py --workspace . --run-sync --offline` *(1 commande, sans `--ack-editorial`, nom dérivé sauf `--name`)*.
 4. **Avec dépôts :** 1 `ask_question` *(dépôts, veille, `public_mode=false`)* → `init_workspace.py` (`--project`, `--watch`, `--public-mode`, `--name`) → `sync_tracking.py --print-delta` → fiches/`IMPACT.md` → `--offline --ack-editorial --print-delta`.
 
 ### 2. `/gravity-architect add [chemin...]`
@@ -39,12 +39,12 @@ Détails (4 phases, Bridge, Plan Mode, callbacks, onboarding) : [workflows-and-h
 
 ### 3. `/gravity-architect status` & `sync`
 - **`status` :** lancer `atelier_status.py` (ou lire `delta.md`/`ECOSYSTEM.md`) sans écrire ; résumer en 5–8 lignes.
-- **`sync` :** sans `./projects.json`, basculer sur `init` ([`workflows-and-hygiene.md`](references/workflows-and-hygiene.md) §5). Sinon `sync_tracking.py --print-delta`. En Plan Mode, si `--check` → `NO_EDITORIAL_CHANGES` et `0` auto-MAJ, répondre sans `exit_plan_mode`. Si `EDITORIAL_UPDATE_REQUIRED`, éditer cibles puis `--offline --ack-editorial --print-delta`. Jamais `--ack-editorial` si WIP non commité ; suivre Bridge via `manage_thread(action="get_job")`. Commit atelier seul si `--commit`, sans `git push`.
+- **`sync` :** sans `./projects.json`, basculer sur `init` ([`workflows-and-hygiene.md`](references/workflows-and-hygiene.md) §5). Sinon `sync_tracking.py --print-delta`. En Plan Mode, si `--check` → `NO_EDITORIAL_CHANGES` et `0` auto-MAJ, répondre sans `exit_plan_mode`. Si `EDITORIAL_UPDATE_REQUIRED`, éditer cibles puis `--offline --ack-editorial --print-delta`. Jamais `--ack-editorial` si WIP non commité. Commit atelier seul si `--commit`, sans `git push`.
 
 ### 4. `spec <slug>` · `task <projet> <slug>` · `archive <slug>`
 - **`spec <slug>` :** challenger le besoin, créer `specs/<YYYY-MM-DD>-<slug>.md` depuis `specs/_TEMPLATE.md`.
-- **`task <projet> <slug>` & Bridge :** créer `tasks/<YYYY-MM-DD>-<projet>-<slug>.md` (vague, dépendances, ancres `::`/`~L`, `<= 5` code, invariants, vérifs) → `core/waves.py --check-waves`. Afficher `rédigé, non déployé` et proposer `/gravity-bridge`. Sur demande d'envoi, **1 `ask_question` récapitulatif** (cibles, objets, `file_refs`, `batch_id`, posture) vaut activation Bridge + `approved=true, dispatch=true`.
-- **`archive <slug>` :** après vérifs, commit/push `dev` et install, déplacer vers `specs/archive/` et `tasks/archive/` (`done`), `--offline --ack-editorial --print-delta`, puis clôture `gravity-metrics` ([`workflows-and-hygiene.md`](references/workflows-and-hygiene.md) §3).
+- **`task <projet> <slug>` :** créer `tasks/<YYYY-MM-DD>-<projet>-<slug>.md` (vague, dépendances, `quick`|`standard`, `::`/`~L`, `<= 5` code, vérifs) → `core/waves.py --check-waves`. Afficher `rédigé, non déployé` et proposer `wave_runner.py` ou `/swarm` après **1 `ask_question` récapitulatif**.
+- **`archive <slug>` :** après vérifs, commit/push `dev` et install, archiver (`specs/archive/`, `tasks/archive/`, `done`), `--offline --ack-editorial --print-delta`, puis clôture `gravity-metrics` ([`workflows-and-hygiene.md`](references/workflows-and-hygiene.md) §3).
 
 ### 5. `/gravity-architect audit [projet|all]` *(Code & Architecture)*
 - Auditer en **lecture seule absolue** les dépôts suivis *(0 audit agent/métriques)* ; rédiger `audits/code/<YYYY-MM-DD>-audit-code-<cible>.md` (`CODE-XX-N` `P0`–`P2`) et MAJ `audits/code/README.md` *(isolé d'`audits/agents/`)*.

@@ -5,9 +5,7 @@ from __future__ import annotations
 
 import argparse
 import json
-import os
 from pathlib import Path
-import sqlite3
 import sys
 from typing import Any
 
@@ -22,84 +20,6 @@ from core.io_utils import (  # noqa: E402
     read_json_safe,
     resolve_workspace_root,
 )
-
-ACTIVE_JOB_STATUSES: tuple[str, ...] = ("queued", "claimed", "dispatched")
-
-
-def resolve_bridge_db_path(
-    *,
-    env: dict[str, str] | None = None,
-    home_dir: Path | None = None,
-    bridge_db: Path | None = None,
-) -> Path:
-    """Résout le chemin brut vers `bridge.db` (`$GRAVITY_BRIDGE_HOME` > `$GRAVITY_HOME/bridge` > `~/.gemini/gravity/bridge`)."""
-    if bridge_db is not None:
-        return bridge_db.expanduser()
-    env_map = env if env is not None else os.environ
-    raw_bridge_home = str(env_map.get("GRAVITY_BRIDGE_HOME") or "").strip()
-    if raw_bridge_home:
-        return Path(raw_bridge_home).expanduser() / "bridge.db"
-    raw_gravity_home = str(env_map.get("GRAVITY_HOME") or "").strip()
-    if raw_gravity_home:
-        return Path(raw_gravity_home).expanduser() / "bridge" / "bridge.db"
-    base_home = (home_dir if home_dir is not None else Path.home()).expanduser()
-    return base_home / ".gemini" / "gravity" / "bridge" / "bridge.db"
-
-
-def _has_symlink_component(path: Path) -> bool:
-    """Retourne True si `path` ou l'un de ses parents directs bridge/home est un lien symbolique."""
-    for cand in (path, path.parent):
-        try:
-            if cand.is_symlink():
-                return True
-        except OSError:
-            return True
-    return False
-
-
-def probe_bridge_ro(
-    *,
-    env: dict[str, str] | None = None,
-    home_dir: Path | None = None,
-    bridge_db: Path | None = None,
-) -> dict[str, Any]:
-    """Sonde strictement en lecture seule (`?mode=ro` + `PRAGMA query_only = ON`) sans créer `bridge.db`."""
-    raw_db = resolve_bridge_db_path(env=env, home_dir=home_dir, bridge_db=bridge_db)
-    base: dict[str, Any] = {
-        "available": False,
-        "db_path": str(raw_db),
-        "open_threads": 0,
-        "active_jobs": 0,
-        "error": None,
-    }
-    if _has_symlink_component(raw_db):
-        base["error"] = "Lien symbolique refusé pour bridge.db."
-        return base
-    if not raw_db.is_file():
-        return base
-
-    resolved_db = raw_db.resolve()
-    base["db_path"] = str(resolved_db)
-    conn: sqlite3.Connection | None = None
-    try:
-        conn = sqlite3.connect(f"{resolved_db.as_uri()}?mode=ro", uri=True, timeout=1.0)
-        conn.execute("PRAGMA query_only = ON")
-        row_t = conn.execute("SELECT COUNT(*) FROM threads WHERE status = 'open'").fetchone()
-        row_j = conn.execute(
-            "SELECT COUNT(*) FROM jobs WHERE status IN ('queued', 'claimed', 'dispatched')"
-        ).fetchone()
-        base["open_threads"] = int(row_t[0] or 0) if row_t else 0
-        base["active_jobs"] = int(row_j[0] or 0) if row_j else 0
-        base["available"] = True
-    except (sqlite3.Error, OSError) as exc:
-        base["error"] = str(exc)
-    finally:
-        if conn is not None:
-            try:
-                conn.close()
-            except sqlite3.Error:
-                pass
-    return base
 
 
 def _summarize_tasks(pending_tasks: list[dict[str, Any]]) -> tuple[dict[str, dict[str, int]], dict[str, int]]:
@@ -127,7 +47,6 @@ def _build_suggested_actions(
     initialized: bool,
     specs: list[dict[str, Any]],
     pending_tasks: list[dict[str, Any]],
-    bridge: dict[str, Any],
 ) -> list[dict[str, str]]:
     if not initialized:
         return [
@@ -144,12 +63,12 @@ def _build_suggested_actions(
         ]
 
     actions: list[dict[str, str]] = []
-    if specs or pending_tasks or bridge.get("active_jobs", 0) > 0 or bridge.get("open_threads", 0) > 0:
+    if specs or pending_tasks:
         actions.append(
             {
                 "action": "reprendre",
                 "command": "/gravity-architect <instruction>",
-                "reason": "Reprendre les specs/tasks actives ou le suivi Bridge en cours.",
+                "reason": "Reprendre les specs/tasks actives en cours.",
             }
         )
     actions.append(
@@ -175,12 +94,9 @@ def collect_atelier_status(
     cwd: Path | None = None,
     env: dict[str, str] | None = None,
     home_dir: Path | None = None,
-    bridge_db: Path | None = None,
     templates_dir: Path | None = None,
 ) -> dict[str, Any]:
     """Collecte en lecture seule l'état complet d'un atelier (0 écriture, 0 capture metrics)."""
-    bridge = probe_bridge_ro(env=env, home_dir=home_dir, bridge_db=bridge_db)
-
     ws_root: Path | None = None
     cfg_path: Path | None = None
     resolve_error: str | None = None
@@ -205,11 +121,10 @@ def collect_atelier_status(
             "archived_tasks_count": 0,
             "tasks_by_wave": {},
             "tasks_by_status": {},
-            "bridge": bridge,
             "hot_budgets": {},
             "hygiene_alerts": [],
             "suggested_actions": _build_suggested_actions(
-                initialized=False, specs=[], pending_tasks=[], bridge=bridge
+                initialized=False, specs=[], pending_tasks=[]
             ),
         }
 
@@ -228,11 +143,10 @@ def collect_atelier_status(
             "archived_tasks_count": 0,
             "tasks_by_wave": {},
             "tasks_by_status": {},
-            "bridge": bridge,
             "hot_budgets": {},
             "hygiene_alerts": [f"`{cfg_path.name}` : JSON invalide ou illisible."],
             "suggested_actions": _build_suggested_actions(
-                initialized=False, specs=[], pending_tasks=[], bridge=bridge
+                initialized=False, specs=[], pending_tasks=[]
             ),
         }
 
@@ -271,11 +185,10 @@ def collect_atelier_status(
         "archived_tasks_count": archived_tasks_count,
         "tasks_by_wave": tasks_by_wave,
         "tasks_by_status": tasks_by_status,
-        "bridge": bridge,
         "hot_budgets": hot_budgets,
         "hygiene_alerts": hygiene_alerts,
         "suggested_actions": _build_suggested_actions(
-            initialized=True, specs=specs, pending_tasks=pending_tasks, bridge=bridge
+            initialized=True, specs=specs, pending_tasks=pending_tasks
         ),
     }
 
@@ -314,17 +227,6 @@ def format_status_markdown(payload: dict[str, Any]) -> str:
                 lines.append(f"  - **{wave_label}** : {summary}")
         else:
             lines.append("- **Tasks actives :** aucune")
-
-    bridge = payload.get("bridge") or {}
-    if bridge.get("available"):
-        lines.append(
-            f"- **Bridge :** `{bridge.get('open_threads', 0)}` thread(s) ouvert(s), "
-            f"`{bridge.get('active_jobs', 0)}` job(s) actif(s)"
-        )
-    elif bridge.get("error"):
-        lines.append(f"- **Bridge :** indisponible ({bridge['error']})")
-    else:
-        lines.append("- **Bridge :** aucune base `bridge.db` active")
 
     alerts = payload.get("hygiene_alerts") or []
     if alerts:

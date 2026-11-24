@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- **100 % Native 4-Phase Workflow Alignment (Zero Active Bridge):**
+  - Updated `plugin/templates/AGENTS.md` (`<= 2 500 B`), `plugin/skills/gravity-architect/SKILL.md` (`<= 6 000 B`), `plugin/skills/gravity-architect/references/workflows-and-hygiene.md`, `plugin/README.md`, and `README.md` to formalize the 100 % native Production workflow (`run_workflow` `wave_runner.py` in isolated temporary `git worktree`s with `Planner` skipped on `plan_file` and `15m`/`6m` watchdogs, or native `/swarm` for coupled tasks), risk-based `quick` (`Reviewer flash`) / `standard` (`Reviewer pro`) routing, the `<= 5` code files per task ceiling, the root `/compact` rule at `> 250k` context tokens, the 9-field `plugin/plugin.json` manifest + `plugin/config/module.json` (`schema_version: 1`) contract, and zero active `gravity-bridge` references or private leaks.
+  - Updated `tests/test_hooks_and_status.py` and `tests/test_init_and_install.py` to verify Bridge-free status payloads/Markdown, native workflow tokens, and zero active Bridge references across templates, skills, and READMEs.
+
+### Removed
+- **Bridge Probing in `plugin/scripts/atelier_status.py`:**
+  - Removed `ACTIVE_JOB_STATUSES`, `resolve_bridge_db_path()`, `_has_symlink_component()`, `probe_bridge_ro()`, the `bridge_db` parameter and `"bridge"` output block from `collect_atelier_status()`, and Bridge actions/sections from `_build_suggested_actions()` and `format_status_markdown()`.
+
 ### Added
 - **Wave 2 (`atelier_status.py`, `PreInvocation` 0-token hook, `INT-07` & `INT-01/03/06`):**
   - Added `plugin/scripts/atelier_status.py` (100 % stdlib Python 3.10+, UTF-8 no-BOM, LF, zero disk writes, zero `gravity-metrics` capture) exposing `collect_atelier_status()`, `format_status_markdown()`, and CLI (`--workspace`, `--json`) with workspace resolution, active specs/tasks grouped by wave/status, strict SQLite `?mode=ro` + `PRAGMA query_only = ON` Bridge probe (symlink rejection, never creates missing `bridge.db`), `INT-07` hygiene alerts, and suggested actions.

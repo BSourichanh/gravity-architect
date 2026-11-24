@@ -8,7 +8,6 @@ import io
 import json
 import os
 from pathlib import Path
-import sqlite3
 import subprocess
 import sys
 import tempfile
@@ -25,33 +24,12 @@ import atelier_status  # noqa: E402
 import init_workspace  # noqa: E402
 
 
-def _create_bridge_db(db_path: Path, *, open_threads: int = 2, closed_threads: int = 1, active_jobs: int = 3, done_jobs: int = 2) -> None:
-    db_path.parent.mkdir(parents=True, exist_ok=True)
-    conn = sqlite3.connect(str(db_path))
-    try:
-        conn.execute("CREATE TABLE threads (id TEXT PRIMARY KEY, status TEXT)")
-        conn.execute("CREATE TABLE jobs (id TEXT PRIMARY KEY, status TEXT)")
-        for i in range(open_threads):
-            conn.execute("INSERT INTO threads (id, status) VALUES (?, 'open')", (f"t-open-{i}",))
-        for i in range(closed_threads):
-            conn.execute("INSERT INTO threads (id, status) VALUES (?, 'done')", (f"t-done-{i}",))
-        statuses = ["queued", "claimed", "dispatched"]
-        for i in range(active_jobs):
-            conn.execute("INSERT INTO jobs (id, status) VALUES (?, ?)", (f"j-act-{i}", statuses[i % len(statuses)]))
-        for i in range(done_jobs):
-            conn.execute("INSERT INTO jobs (id, status) VALUES (?, 'completed')", (f"j-done-{i}",))
-        conn.commit()
-    finally:
-        conn.close()
-
-
 def _run_hook(
     stdin_text: str,
     *,
     cwd: Path,
     fake_home: Path,
     arch_home: Path,
-    bridge_home: Path,
     extra_env: dict[str, str] | None = None,
 ) -> subprocess.CompletedProcess[str]:
     env = dict(os.environ)
@@ -60,7 +38,6 @@ def _run_hook(
     env["USERPROFILE"] = str(fake_home)
     env["GRAVITY_HOME"] = str(fake_home / ".gemini" / "gravity")
     env["GRAVITY_ARCHITECT_HOME"] = str(arch_home)
-    env["GRAVITY_BRIDGE_HOME"] = str(bridge_home)
     env.pop("GRAVITY_ARCHITECT_WORKSPACE", None)
     if extra_env:
         env.update(extra_env)
@@ -80,26 +57,24 @@ def _run_hook(
 
 
 class TestAtelierStatusAndHook(unittest.TestCase):
-    def test_atelier_status_uninitialized_and_no_bridge_creation(self) -> None:
+    def test_atelier_status_uninitialized_zero_writes(self) -> None:
+        self.assertFalse(hasattr(atelier_status, "resolve_bridge_db_path"))
+        self.assertFalse(hasattr(atelier_status, "probe_bridge_ro"))
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             empty_ws = root / "empty-dir"
             empty_ws.mkdir()
             fake_home = root / "home"
             fake_home.mkdir()
-            missing_bridge = root / "bridge" / "bridge.db"
 
             payload = atelier_status.collect_atelier_status(
                 workspace_arg=empty_ws,
                 cwd=empty_ws,
-                env={"GRAVITY_BRIDGE_HOME": str(missing_bridge.parent)},
+                env={},
                 home_dir=fake_home,
             )
             self.assertFalse(payload["initialized"])
-            self.assertFalse(payload["bridge"]["available"])
-            self.assertEqual(payload["bridge"]["open_threads"], 0)
-            self.assertEqual(payload["bridge"]["active_jobs"], 0)
-            self.assertFalse(missing_bridge.exists())
+            self.assertNotIn("bridge", payload)
             self.assertFalse((fake_home / ".gemini").exists())
             self.assertEqual(list(empty_ws.iterdir()), [])
             cmds = [a["command"] for a in payload["suggested_actions"]]
@@ -108,15 +83,13 @@ class TestAtelierStatusAndHook(unittest.TestCase):
             md = atelier_status.format_status_markdown(payload)
             self.assertIn("non initialisé", md)
             self.assertIn("/gravity-architect init", md)
+            self.assertNotIn("bridge", md.lower())
 
-    def test_atelier_status_initialized_specs_tasks_bridge_ro_and_hygiene(self) -> None:
+    def test_atelier_status_initialized_specs_tasks_and_hygiene(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             ws = root / "atelier"
             arch_home = root / "arch-home"
-            bridge_dir = root / "bridge-home"
-            bridge_db = bridge_dir / "bridge.db"
-            _create_bridge_db(bridge_db, open_threads=2, closed_threads=1, active_jobs=3, done_jobs=4)
 
             with mock.patch.dict(os.environ, {"GRAVITY_ARCHITECT_HOME": str(arch_home), "GRAVITY_ARCHITECT_SKIP_REGISTRY": "1"}):
                 init_workspace.init_workspace(ws, name="Atelier Test", preset="generic")
@@ -124,6 +97,22 @@ class TestAtelierStatusAndHook(unittest.TestCase):
             # Retire ateliers.json s'il existait et vérifie qu'atelier_status n'écrit rien
             reg_file = arch_home / "ateliers.json"
             self.assertFalse(reg_file.exists())
+
+            # Atelier vierge sans specs/tasks -> pas d'action 'reprendre' ni alerte si snapshot présent
+            snap_dir = ws / "tracking" / "snapshots"
+            snap_dir.mkdir(parents=True, exist_ok=True)
+            (snap_dir / "ecosystem_snapshot.md").write_text("# Snapshot\n", encoding="utf-8")
+            clean_payload = atelier_status.collect_atelier_status(
+                workspace_arg=ws,
+                env={},
+                home_dir=root / "fake-home",
+            )
+            self.assertTrue(clean_payload["initialized"])
+            self.assertNotIn("bridge", clean_payload)
+            self.assertNotIn("reprendre", [a["action"] for a in clean_payload["suggested_actions"]])
+            clean_md = atelier_status.format_status_markdown(clean_payload)
+            self.assertIn("**Hygiène :** aucune alerte", clean_md)
+            self.assertNotIn("bridge", clean_md.lower())
 
             (ws / "specs" / "2026-11-24-demo-spec.md").write_text(
                 "# Spec Demo\n- **Statut :** `validated`\n- **Projets impactés :** `alpha`\n",
@@ -148,10 +137,9 @@ class TestAtelierStatusAndHook(unittest.TestCase):
                 encoding="utf-8",
             )
 
-            db_mtime_before = bridge_db.stat().st_mtime_ns
             payload = atelier_status.collect_atelier_status(
                 workspace_arg=ws,
-                env={"GRAVITY_BRIDGE_HOME": str(bridge_dir)},
+                env={},
                 home_dir=root / "fake-home",
             )
             self.assertTrue(payload["initialized"])
@@ -161,10 +149,8 @@ class TestAtelierStatusAndHook(unittest.TestCase):
             self.assertEqual(payload["tasks_by_wave"]["Vague 1"], {"ready": 1})
             self.assertEqual(payload["tasks_by_wave"]["Vague 2"], {"in_progress": 1})
             self.assertEqual(payload["tasks_by_wave"]["Sans vague"], {"draft": 1})
-            self.assertTrue(payload["bridge"]["available"])
-            self.assertEqual(payload["bridge"]["open_threads"], 2)
-            self.assertEqual(payload["bridge"]["active_jobs"], 3)
-            self.assertEqual(bridge_db.stat().st_mtime_ns, db_mtime_before)
+            self.assertNotIn("bridge", payload)
+            self.assertNotIn("bridge", json.dumps(payload, ensure_ascii=False).lower())
             self.assertFalse(reg_file.exists())
 
             joined_alerts = "\n".join(payload["hygiene_alerts"])
@@ -175,25 +161,30 @@ class TestAtelierStatusAndHook(unittest.TestCase):
             self.assertIn("reprendre", actions)
             self.assertIn("sync", actions)
 
+            md = atelier_status.format_status_markdown(payload)
+            self.assertIn("Atelier Test", md)
+            self.assertIn("**Vague 1**", md)
+            self.assertIn("## Alertes hygiène", md)
+            self.assertNotIn("bridge", md.lower())
+
             out_buf = io.StringIO()
-            with mock.patch.dict(os.environ, {"GRAVITY_BRIDGE_HOME": str(bridge_dir)}), contextlib.redirect_stdout(out_buf):
+            with contextlib.redirect_stdout(out_buf):
                 rc = atelier_status.main(["--workspace", str(ws), "--json"])
             self.assertEqual(rc, 0)
             cli_data = json.loads(out_buf.getvalue())
-            self.assertEqual(cli_data["bridge"]["active_jobs"], 3)
+            self.assertNotIn("bridge", cli_data)
+            self.assertEqual(cli_data["tasks_by_wave"]["Vague 1"], {"ready": 1})
 
-            # Rejet symlink sur bridge.db
-            sym_dir = root / "sym-bridge"
-            sym_dir.mkdir()
-            sym_db = sym_dir / "bridge.db"
-            try:
-                sym_db.symlink_to(bridge_db)
-            except OSError:
-                pass
-            else:
-                sym_probe = atelier_status.probe_bridge_ro(bridge_db=sym_db)
-                self.assertFalse(sym_probe["available"])
-                self.assertIn("symbolique", sym_probe["error"] or "")
+            # projects.json corrompu -> initialized=False sans clé bridge
+            (ws / "projects.json").write_text("{invalid-json", encoding="utf-8")
+            bad_payload = atelier_status.collect_atelier_status(
+                workspace_arg=ws,
+                env={},
+                home_dir=root / "fake-home",
+            )
+            self.assertFalse(bad_payload["initialized"])
+            self.assertNotIn("bridge", bad_payload)
+            self.assertIn("JSON invalide", "\n".join(bad_payload["hygiene_alerts"]))
 
     def test_pre_invocation_architect_hook_bare_vs_passthrough(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -202,8 +193,6 @@ class TestAtelierStatusAndHook(unittest.TestCase):
             fake_home = root / "home"
             fake_home.mkdir()
             arch_home = root / "arch-home"
-            bridge_home = root / "bridge-home"
-            _create_bridge_db(bridge_home / "bridge.db", open_threads=1, active_jobs=2)
 
             with mock.patch.dict(os.environ, {"GRAVITY_ARCHITECT_HOME": str(arch_home), "GRAVITY_ARCHITECT_SKIP_REGISTRY": "1"}):
                 init_workspace.init_workspace(ws, name="Atelier Hook")
@@ -230,7 +219,6 @@ class TestAtelierStatusAndHook(unittest.TestCase):
                     cwd=ws,
                     fake_home=fake_home,
                     arch_home=arch_home,
-                    bridge_home=bridge_home,
                 )
                 self.assertEqual(proc.returncode, 0, msg=proc.stderr or proc.stdout)
                 self.assertTrue(proc.stdout.isascii(), msg=f"Output must be ASCII-safe: {proc.stdout!r}")
@@ -240,7 +228,9 @@ class TestAtelierStatusAndHook(unittest.TestCase):
                 self.assertEqual(len(steps), 1)
                 md = (steps[0].get("systemMessage") or {}).get("metadata", {}).get("user_markdown") or ""
                 self.assertIn("Atelier Hook", md)
-                self.assertIn("1` thread(s) ouvert(s), `2` job(s) actif(s)", md)
+                self.assertIn("Specs actives", md)
+                self.assertIn("Tasks actives", md)
+                self.assertNotIn("bridge", md.lower())
                 self.assertFalse(reg_path.exists())
 
             passthrough_inputs = [
@@ -262,7 +252,6 @@ class TestAtelierStatusAndHook(unittest.TestCase):
                     cwd=ws,
                     fake_home=fake_home,
                     arch_home=arch_home,
-                    bridge_home=bridge_home,
                 )
                 self.assertEqual(proc.returncode, 0, msg=proc.stderr or proc.stdout)
                 self.assertEqual(json.loads(proc.stdout.strip()), {})

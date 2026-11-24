@@ -820,6 +820,10 @@ class TestInitAndInstall(unittest.TestCase):
         self.assertIn("Release `main` & tags (accord humain explicite obligatoire)", tpl_txt)
         self.assertIn("interdiction absolue de `merge dev -> main`", tpl_txt)
         self.assertIn("Aucun `commit` ni `git push` automatique sur un simple `sync`", tpl_txt)
+        self.assertIn("wave_runner.py", tpl_txt)
+        self.assertIn("/swarm", tpl_txt)
+        self.assertIn("250k", tpl_txt)
+        self.assertNotIn("bridge", tpl_txt.lower())
 
         skill_txt = skill_raw.decode("utf-8")
         self.assertIn("Code en lecture seule hors atelier", skill_txt)
@@ -868,7 +872,12 @@ class TestInitAndInstall(unittest.TestCase):
             "non déployé",
             "--ack-editorial",
             "ecosystem_install.py",
-            "get_job",
+            "wave_runner.py",
+            "/swarm",
+            "quick",
+            "standard",
+            "<= 5",
+            "250k",
             "exit_plan_mode",
             "NO_EDITORIAL_CHANGES",
             "../",
@@ -889,7 +898,6 @@ class TestInitAndInstall(unittest.TestCase):
             "gravity-metrics/scripts/cli.py archive <conversation_id>",
             "--update-sealed",
             "--force",
-            "PendingBridgeJobsError",
             "no-op silencieux",
         ):
             self.assertIn(token, ref_txt, f"Règle clôture manquante dans workflows-and-hygiene.md : {token}")
@@ -902,10 +910,25 @@ class TestInitAndInstall(unittest.TestCase):
         self.assertLess(idx_dev_push, idx_archive)
         self.assertLess(idx_archive, idx_metrics)
 
-        # Wave 2 : cycle 4 phases & checkpoint hybride
-        for w2_tok in ("PreInvocation", "atelier_status.py", "RequestFeedback=True", "ask_question", "batch_id", "verify_commands"):
-            self.assertIn(w2_tok, skill_txt, f"Token Wave 2 manquant dans SKILL.md : {w2_tok}")
-            self.assertIn(w2_tok, ref_txt, f"Token Wave 2 manquant dans workflows-and-hygiene.md : {w2_tok}")
+        # Cycle 4 phases natif & checkpoint hybride
+        for w2_tok in ("PreInvocation", "atelier_status.py", "RequestFeedback=True", "ask_question", "verify_commands"):
+            self.assertIn(w2_tok, skill_txt, f"Token cycle natif manquant dans SKILL.md : {w2_tok}")
+            self.assertIn(w2_tok, ref_txt, f"Token cycle natif manquant dans workflows-and-hygiene.md : {w2_tok}")
+
+        # Zéro mention Bridge active dans templates, skills et READMEs
+        tpl_agents_txt = (PLUGIN_ROOT / "templates" / "AGENTS.md").read_text(encoding="utf-8")
+        plugin_readme_txt = (PLUGIN_ROOT / "README.md").read_text(encoding="utf-8")
+        repo_readme_txt = (REPO_ROOT / "README.md").read_text(encoding="utf-8")
+        for doc_label, doc_txt in (
+            ("templates/AGENTS.md", tpl_agents_txt),
+            ("SKILL.md", skill_txt),
+            ("workflows-and-hygiene.md", ref_txt),
+            ("plugin/README.md", plugin_readme_txt),
+            ("README.md", repo_readme_txt),
+        ):
+            self.assertNotIn("bridge", doc_txt.lower(), f"Mention Bridge active dans {doc_label}")
+            self.assertNotIn("get_job", doc_txt, f"Mention get_job restante dans {doc_label}")
+            self.assertNotIn("manage_thread", doc_txt, f"Mention manage_thread restante dans {doc_label}")
 
     def test_validate_int01_03_06_and_fix_python_cmd_install(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
