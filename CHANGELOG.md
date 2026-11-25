@@ -8,6 +8,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Changed
+- **Contrat DIP `wave_plan_v1` & autonomie Phase 3 (`core/io_utils.py`, `core/waves.py`, templates, skills, README) :**
+  - Extraction de `expected_branch` (`Branche attendue`) dans `parse_artifact_file()`, résolution `id -> (repo_root, default_dev_branch)` depuis `projects.json` et validation de `workflow_profile` (`quick|standard|deep`) dans `core/waves.py`.
+  - Ajout de `export_wave()` et des flags `--export-wave <N>` / `--out <PATH>` (*fail-closed* : rejette vague vide, erreur `validate_waves`, `repo_root` absent ou statut `draft`/`done`/`archived`/`cancelled`).
+  - Retrait des références internes `gravity-workflow` (`wave_runner.py`, `caveman ultra`, `last_verified.patch`, `skip_separate_planner`, `apply_on_pass`, watchdogs) dans `templates/`, `skills/` et `plugin/README.md`, en documentant le contrat neutre `wave_plan_v1` et le repli autonome natif.
 - **100 % Native 4-Phase Workflow Alignment (Zero Active Bridge):**
   - Updated `plugin/templates/AGENTS.md` (`<= 2 500 B`), `plugin/skills/gravity-architect/SKILL.md` (`<= 6 000 B`), `plugin/skills/gravity-architect/references/workflows-and-hygiene.md`, `plugin/README.md`, and `README.md` to formalize the 100 % native Production workflow (`run_workflow` `wave_runner.py` in isolated temporary `git worktree`s with `Planner` skipped on `plan_file` and `15m`/`6m` watchdogs, or native `/swarm` for coupled tasks), risk-based `quick` (`Reviewer flash`) / `standard` (`Reviewer pro`) routing, the `<= 5` code files per task ceiling, the root `/compact` rule at `> 250k` context tokens, the 9-field `plugin/plugin.json` manifest + `plugin/config/module.json` (`schema_version: 1`) contract, and zero active `gravity-bridge` references or private leaks.
   - Updated `tests/test_hooks_and_status.py` and `tests/test_init_and_install.py` to verify Bridge-free status payloads/Markdown, native workflow tokens, and zero active Bridge references across templates, skills, and READMEs.

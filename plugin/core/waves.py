@@ -18,9 +18,13 @@ from core.io_utils import (  # noqa: E402
     normalize_target_file,
     resolve_workspace_root,
     scan_md_dir,
+    write_utf8,
 )
 
 MAX_CODE_FILES_PER_TASK = 5
+WAVE_PLAN_SCHEMA_VERSION = "wave_plan_v1"
+ALLOWED_WORKFLOW_PROFILES = frozenset({"quick", "standard", "deep"})
+BLOCKED_EXPORT_STATUSES = frozenset({"draft", "done", "archived", "cancelled"})
 
 
 def is_non_code_file(path_str: str) -> bool:
@@ -41,18 +45,38 @@ def is_non_code_file(path_str: str) -> bool:
     )
 
 
-def _extract_known_project_ids(projects_cfg: dict | list | set | tuple | None) -> set[str] | None:
+def _extract_project_specs(
+    projects_cfg: dict | list | set | tuple | None, *, base_dir: Path | None = None
+) -> dict[str, dict] | None:
+    """Indexe `repo_id -> {id, path, repo_root, default_dev_branch}` depuis `projects.json`."""
     if projects_cfg is None:
         return None
     items = projects_cfg.get("projects") or [] if isinstance(projects_cfg, dict) else projects_cfg
-    ids: set[str] = set()
+    specs: dict[str, dict] = {}
     for item in items:
         if isinstance(item, dict):
             if pid := str(item.get("id") or "").strip():
-                ids.add(pid)
+                raw_path = str(item.get("path") or "").strip()
+                repo_root: Path | None = None
+                if raw_path:
+                    p = Path(raw_path).expanduser()
+                    repo_root = p.resolve() if p.is_absolute() else ((base_dir / p).resolve() if base_dir is not None else p.resolve())
+                dev_branch = str(item.get("default_dev_branch") or "dev").strip() or "dev"
+                specs[pid] = {
+                    "id": pid,
+                    "path": raw_path,
+                    "repo_root": repo_root,
+                    "default_dev_branch": dev_branch,
+                }
         elif isinstance(item, str) and item.strip():
-            ids.add(item.strip())
-    return ids
+            pid = item.strip()
+            specs[pid] = {"id": pid, "path": "", "repo_root": None, "default_dev_branch": "dev"}
+    return specs
+
+
+def _extract_known_project_ids(projects_cfg: dict | list | set | tuple | None) -> set[str] | None:
+    specs = _extract_project_specs(projects_cfg)
+    return set(specs.keys()) if specs is not None else None
 
 
 def _task_id(task: dict, idx: int) -> str:
@@ -155,6 +179,15 @@ def validate_waves(tasks: list[dict], projects_cfg: dict | list | set | tuple | 
         deps = [str(d).strip()[:-3] if str(d).strip().endswith(".md") else str(d).strip() for d in (task.get("dependencies") or []) if str(d).strip()]
         deps_map[tid] = deps
 
+        raw_profile = task.get("workflow_profile")
+        if raw_profile is None:
+            raw_profile = task.get("profile")
+        profile_str = str(raw_profile or "").strip()
+        if profile_str and profile_str.lower() not in ALLOWED_WORKFLOW_PROFILES:
+            errors.append(
+                f"Task `{tid}` : `workflow_profile` invalide ({profile_str!r}, attendu : quick | standard | deep)."
+            )
+
     for tid, deps in deps_map.items():
         for dep in deps:
             if dep == tid:
@@ -203,10 +236,105 @@ def validate_waves(tasks: list[dict], projects_cfg: dict | list | set | tuple | 
     }
 
 
+def _resolve_task_plan_file(task: dict, tid: str, *, workspace_root: Path, tasks_dir: Path | None = None) -> str:
+    if raw_plan := str(task.get("plan_file") or "").strip():
+        return str(Path(raw_plan).expanduser().resolve())
+    if filename := str(task.get("filename") or "").strip():
+        if tasks_dir is not None:
+            cand = (tasks_dir / filename).resolve()
+            if cand.is_file():
+                return str(cand)
+    if rel_path := str(task.get("rel_path") or "").strip():
+        cand = (workspace_root / rel_path).resolve()
+        if cand.is_file() or tasks_dir is None:
+            return str(cand)
+    base_tasks = tasks_dir.resolve() if tasks_dir is not None else (workspace_root / "tasks").resolve()
+    name = str(task.get("filename") or f"{tid}.md").strip()
+    return str((base_tasks / name).resolve())
+
+
+def export_wave(
+    tasks: list[dict],
+    wave: int,
+    *,
+    workspace_root: Path,
+    projects_cfg: dict | list | None = None,
+    tasks_dir: Path | None = None,
+) -> dict:
+    """Compile une vague validée en manifeste JSON `wave_plan_v1` (fail-closed)."""
+    if not isinstance(wave, int) or isinstance(wave, bool) or wave < 1:
+        raise ValueError(f"Numéro de vague invalide ({wave!r}, entier >= 1 requis).")
+
+    ws_resolved = workspace_root.expanduser().resolve()
+    project_specs = _extract_project_specs(projects_cfg, base_dir=ws_resolved)
+    if project_specs is None:
+        raise ValueError("Configuration `projects.json` manquante pour résoudre `repo_root`.")
+
+    validation = validate_waves(tasks, projects_cfg=projects_cfg)
+    if not validation["ok"]:
+        raise ValueError("Validation des vagues échouée : " + " ; ".join(validation["errors"]))
+
+    selected: list[tuple[str, dict]] = [
+        (_task_id(task, idx), task) for idx, task in enumerate(tasks) if task.get("wave") == wave
+    ]
+    if not selected:
+        raise ValueError(f"Vague {wave} vide : aucune task trouvée.")
+
+    selected.sort(key=lambda item: item[0])
+    exported_tasks: list[dict] = []
+    for tid, task in selected:
+        status_raw = str(task.get("status") or "").strip()
+        if status_raw.lower() in BLOCKED_EXPORT_STATUSES:
+            raise ValueError(f"Task `{tid}` : statut `{status_raw}` bloqué pour export.")
+
+        repo_id = str(task.get("target_project") or "").strip()
+        spec = project_specs.get(repo_id)
+        if spec is None:
+            raise ValueError(f"Task `{tid}` : dépôt cible `{repo_id}` introuvable dans `projects.json`.")
+        repo_root = spec.get("repo_root")
+        if not isinstance(repo_root, Path) or not repo_root.is_dir():
+            raise ValueError(f"Task `{tid}` : `repo_root` absent ou introuvable pour `{repo_id}` ({repo_root}).")
+
+        task_branch = str(task.get("expected_branch") or "").strip()
+        expected_branch = task_branch or str(spec.get("default_dev_branch") or "dev")
+
+        raw_profile = task.get("workflow_profile")
+        if raw_profile is None:
+            raw_profile = task.get("profile")
+        profile = str(raw_profile or "").strip().lower() or "standard"
+
+        norm_files: list[str] = []
+        for raw_f in task.get("target_files") or []:
+            nf = normalize_target_file(str(raw_f))
+            if nf and nf not in norm_files:
+                norm_files.append(nf)
+
+        exported_tasks.append({
+            "id": tid,
+            "title": str(task.get("title") or tid).strip() or tid,
+            "repo_id": repo_id,
+            "repo_root": str(repo_root),
+            "expected_branch": expected_branch,
+            "profile": profile,
+            "plan_file": _resolve_task_plan_file(task, tid, workspace_root=ws_resolved, tasks_dir=tasks_dir),
+            "target_files": norm_files,
+            "status": status_raw or "unknown",
+        })
+
+    return {
+        "schema_version": WAVE_PLAN_SCHEMA_VERSION,
+        "workspace": str(ws_resolved),
+        "wave": wave,
+        "tasks": exported_tasks,
+    }
+
+
 def build_parser() -> argparse.ArgumentParser:
-    """Construit le parseur CLI de validation des vagues."""
+    """Construit le parseur CLI de validation et d'export des vagues."""
     parser = argparse.ArgumentParser(description="Valide le DAG, les vagues et les ancres des tasks Gravity Architect.")
     parser.add_argument("--check-waves", action="store_true", help="Exécute la validation fail-closed des vagues (actif par défaut).")
+    parser.add_argument("--export-wave", type=int, default=None, help="Exporte la vague <N> au format JSON wave_plan_v1 (fail-closed).")
+    parser.add_argument("--out", type=Path, default=None, help="Chemin de sortie optionnel pour --export-wave.")
     parser.add_argument("--workspace", type=Path, default=None, help="Racine de l'atelier contenant projects.json et tasks/.")
     parser.add_argument("--tasks-dir", type=Path, default=None, help="Répertoire tasks/ explicite à valider.")
     parser.add_argument("--config", type=Path, default=None, help="Chemin explicite vers projects.json.")
@@ -219,6 +347,9 @@ def main(argv: list[str] | None = None) -> int:
     configure_utf8_stdio()
     args = build_parser().parse_args(argv)
     try:
+        if args.out is not None and args.export_wave is None:
+            raise ValueError("--out requiert --export-wave <N>.")
+
         if args.tasks_dir is not None:
             tasks_dir = args.tasks_dir.expanduser().resolve()
             concept_root = args.workspace.expanduser().resolve() if args.workspace is not None else tasks_dir.parent
@@ -231,12 +362,34 @@ def main(argv: list[str] | None = None) -> int:
 
         scan_root = concept_root if tasks_dir.is_relative_to(concept_root) else tasks_dir.parent
         tasks = scan_md_dir(tasks_dir, scan_root)
+
+        if args.export_wave is not None:
+            payload = export_wave(
+                tasks,
+                args.export_wave,
+                workspace_root=concept_root,
+                projects_cfg=projects_cfg,
+                tasks_dir=tasks_dir,
+            )
+            serialized = json.dumps(payload, indent=2, ensure_ascii=False)
+            if args.out is not None:
+                out_path = args.out.expanduser().resolve()
+                write_utf8(out_path, serialized + "\n")
+                if args.json:
+                    print(serialized)
+                else:
+                    print(f"[PASS] Vague {args.export_wave} exportée vers {out_path} ({len(payload['tasks'])} task(s)).")
+            else:
+                print(serialized)
+            return 0
+
         result = validate_waves(tasks, projects_cfg=projects_cfg)
     except (OSError, ValueError, json.JSONDecodeError) as exc:
         if args.json:
             print(json.dumps({"ok": False, "errors": [str(exc)], "warnings": [], "task_count": 0, "waves": {}}, ensure_ascii=False))
         else:
-            print(f"[erreur] Validation des vagues impossible : {exc}", file=sys.stderr)
+            label = "Export de la vague" if args.export_wave is not None else "Validation des vagues"
+            print(f"[erreur] {label} impossible : {exc}", file=sys.stderr)
         return 1
 
     if args.json:

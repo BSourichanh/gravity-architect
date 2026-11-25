@@ -36,4 +36,4 @@
   ```
 
 ## Retour attendu pour l'atelier
-Mode `caveman ultra` : fournir `last_verified.patch`, fichiers modifiés + hash commit, résultat exact des vérifications et entrée `CHANGELOG.md` proposée.
+Fournir fichiers modifiés, résumé des tests ajoutés/passés, résultat exact des vérifications et entrée `CHANGELOG.md` proposée.

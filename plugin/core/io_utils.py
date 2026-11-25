@@ -472,6 +472,7 @@ STATUS_LINE_RE = re.compile(r"^\s*-\s*\*\*(?:Date\s*/\s*)?Statut\s*:\*\*\s*(.+?)
 TARGET_LINE_RE = re.compile(r"^\s*-\s*\*\*(?:Dépôt cible|Projets? impactés?)\s*:\*\*\s*(.+?)\s*$", re.MULTILINE | re.IGNORECASE)
 WAVE_LINE_RE = re.compile(r"^\s*-\s*\*\*Vague\s*:\*\*\s*(.+?)\s*$", re.MULTILINE | re.IGNORECASE)
 DEPS_LINE_RE = re.compile(r"^\s*-\s*\*\*D[ée]pendances\s*:\*\*\s*(.+?)\s*$", re.MULTILINE | re.IGNORECASE)
+BRANCH_LINE_RE = re.compile(r"^\s*-\s*\*\*Branche\s+attendue\s*:\*\*\s*(.+?)\s*$", re.MULTILINE | re.IGNORECASE)
 PROFILE_LINE_RE = re.compile(r"^\s*-\s*\*\*Profil\s+workflow\s*:\*\*\s*(.+?)\s*$", re.MULTILINE | re.IGNORECASE)
 FILES_LINE_RE = re.compile(r"^\s*-\s*\*\*Fichiers\s+cibles\s*:\*\*\s*(.+?)\s*$", re.MULTILINE | re.IGNORECASE)
 ANCHORS_LINE_RE = re.compile(r"^\s*-\s*\*\*Ancres\s*:\*\*\s*(.+?)\s*$", re.MULTILINE | re.IGNORECASE)
@@ -570,6 +571,11 @@ def _extract_targets_and_anchors(text: str) -> tuple[list[str], dict[str, list[s
     return target_files, anchors
 
 
+def _clean_optional_field(pattern: re.Pattern[str], text: str) -> str:
+    val = clean_md_field(m.group(1)) if (m := pattern.search(text)) else ""
+    return "" if val.lower() in EMPTY_FIELD_TOKENS else val
+
+
 def parse_artifact_file(path: Path, concept_root: Path) -> dict:
     """Extrait les métadonnées d'une spec ou d'une task Markdown."""
     text = path.read_text(encoding="utf-8", errors="replace")
@@ -603,10 +609,8 @@ def parse_artifact_file(path: Path, concept_root: Path) -> dict:
             if dep and dep not in dependencies:
                 dependencies.append(dep)
 
-    profile_match = PROFILE_LINE_RE.search(text)
-    workflow_profile = clean_md_field(profile_match.group(1)) if profile_match else ""
-    if workflow_profile.lower() in EMPTY_FIELD_TOKENS:
-        workflow_profile = ""
+    expected_branch = _clean_optional_field(BRANCH_LINE_RE, text)
+    workflow_profile = _clean_optional_field(PROFILE_LINE_RE, text)
     target_files, anchors = _extract_targets_and_anchors(text)
     out: dict = {
         "id": path.stem,
@@ -616,6 +620,7 @@ def parse_artifact_file(path: Path, concept_root: Path) -> dict:
         "date": date_match.group(1) if date_match else None,
         "status": clean_md_field(status_match.group(1)) if status_match else "unknown",
         "target_project": target_project,
+        "expected_branch": expected_branch,
         "wave": wave,
         "dependencies": dependencies,
         "workflow_profile": workflow_profile,

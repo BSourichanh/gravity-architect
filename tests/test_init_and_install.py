@@ -820,7 +820,8 @@ class TestInitAndInstall(unittest.TestCase):
         self.assertIn("Release `main` & tags (accord humain explicite obligatoire)", tpl_txt)
         self.assertIn("interdiction absolue de `merge dev -> main`", tpl_txt)
         self.assertIn("Aucun `commit` ni `git push` automatique sur un simple `sync`", tpl_txt)
-        self.assertIn("wave_runner.py", tpl_txt)
+        self.assertIn("wave_plan_v1", tpl_txt)
+        self.assertNotIn("wave_runner.py", tpl_txt)
         self.assertIn("/swarm", tpl_txt)
         self.assertIn("250k", tpl_txt)
         self.assertNotIn("bridge", tpl_txt.lower())
@@ -872,7 +873,8 @@ class TestInitAndInstall(unittest.TestCase):
             "non déployé",
             "--ack-editorial",
             "ecosystem_install.py",
-            "wave_runner.py",
+            "wave_plan_v1",
+            "--export-wave",
             "/swarm",
             "quick",
             "standard",
@@ -929,6 +931,23 @@ class TestInitAndInstall(unittest.TestCase):
             self.assertNotIn("bridge", doc_txt.lower(), f"Mention Bridge active dans {doc_label}")
             self.assertNotIn("get_job", doc_txt, f"Mention get_job restante dans {doc_label}")
             self.assertNotIn("manage_thread", doc_txt, f"Mention manage_thread restante dans {doc_label}")
+
+        tpl_task_txt = (PLUGIN_ROOT / "templates" / "task-template.md").read_text(encoding="utf-8")
+        for doc_label, doc_txt in (
+            ("templates/AGENTS.md", tpl_agents_txt),
+            ("templates/task-template.md", tpl_task_txt),
+            ("SKILL.md", skill_txt),
+            ("workflows-and-hygiene.md", ref_txt),
+            ("plugin/README.md", plugin_readme_txt),
+        ):
+            for forbidden in (
+                "wave_runner.py",
+                "caveman ultra",
+                "last_verified.patch",
+                "skip_separate_planner",
+                "apply_on_pass",
+            ):
+                self.assertNotIn(forbidden, doc_txt, f"Référence interne workflow `{forbidden}` dans {doc_label}")
 
     def test_validate_int01_03_06_and_fix_python_cmd_install(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

@@ -22,6 +22,9 @@ def _make_task(
     *,
     wave: int | str | bool | None = 1,
     target_project: str = "alpha",
+    expected_branch: str = "",
+    workflow_profile: str = "",
+    status: str = "ready",
     dependencies: list[str] | None = None,
     target_files: list[str] | None = None,
     anchors: dict[str, list[str]] | None = None,
@@ -29,8 +32,12 @@ def _make_task(
     return {
         "id": tid,
         "filename": f"{tid}.md",
+        "title": f"Task {tid}",
+        "status": status,
         "wave": wave,
         "target_project": target_project,
+        "expected_branch": expected_branch,
+        "workflow_profile": workflow_profile,
         "dependencies": dependencies or [],
         "target_files": target_files or [],
         "anchors": anchors or {},
@@ -227,6 +234,161 @@ class TestWavesValidation(unittest.TestCase):
             payload_fail = json.loads(buf_fail.getvalue())
             self.assertFalse(payload_fail["ok"])
             self.assertTrue(any("collision" in e for e in payload_fail["errors"]))
+
+    def test_workflow_profile_validation(self) -> None:
+        tasks = [
+            _make_task("t-quick", wave=1, target_project="alpha", workflow_profile="quick"),
+            _make_task("t-std", wave=2, target_project="alpha", workflow_profile="standard"),
+            _make_task("t-deep", wave=3, target_project="alpha", workflow_profile="deep"),
+            _make_task("t-empty", wave=4, target_project="alpha", workflow_profile=""),
+        ]
+        res_ok = waves.validate_waves(tasks)
+        self.assertTrue(res_ok["ok"], res_ok["errors"])
+
+        res_bad = waves.validate_waves([_make_task("t-bad", wave=1, target_project="alpha", workflow_profile="ultra")])
+        self.assertFalse(res_bad["ok"])
+        self.assertTrue(any("workflow_profile" in e and "ultra" in e for e in res_bad["errors"]), res_bad["errors"])
+
+    def test_export_wave_v1_contract_and_fail_closed_cli(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            ws = root / "atelier"
+            tasks_dir = ws / "tasks"
+            tasks_dir.mkdir(parents=True)
+            repo_alpha = root / "alpha"
+            repo_beta = root / "beta"
+            repo_alpha.mkdir()
+            repo_beta.mkdir()
+
+            cfg_path = ws / "projects.json"
+            cfg_path.write_text(
+                json.dumps({
+                    "schema_version": 5,
+                    "projects": [
+                        {"id": "alpha", "path": "../alpha", "default_dev_branch": "develop"},
+                        {"id": "beta", "path": str(repo_beta)},
+                    ],
+                }),
+                encoding="utf-8",
+            )
+
+            t1_path = tasks_dir / "2026-11-25-w1-alpha.md"
+            t1_path.write_text(
+                "# Alpha Lot 1\n"
+                "- **Vague :** `1`\n"
+                "- **Dépôt cible :** `alpha` (`../alpha`)\n"
+                "- **Dépendances :** `aucune`\n"
+                "- **Profil workflow :** `quick`\n"
+                "- **Date / Statut :** `2026-11-25` — `ready`\n\n"
+                "## Ancres exactes\n"
+                "- `plugin/core.py::run (~L10-L20)`\n",
+                encoding="utf-8",
+            )
+            t2_path = tasks_dir / "2026-11-25-w1-beta.md"
+            t2_path.write_text(
+                "# Beta Lot 1\n"
+                "- **Vague :** `1`\n"
+                "- **Dépôt cible :** `beta`\n"
+                "- **Branche attendue :** `feat/dip-w1`\n"
+                "- **Dépendances :** `aucune`\n"
+                "- **Date / Statut :** `2026-11-25` — `ready`\n\n"
+                "## Ancres exactes\n"
+                "- `src/main.py::main (~L1-L10)`\n",
+                encoding="utf-8",
+            )
+            t3_path = tasks_dir / "2026-11-25-w2-alpha.md"
+            t3_path.write_text(
+                "# Alpha Lot 2\n"
+                "- **Vague :** `2`\n"
+                "- **Dépôt cible :** `alpha`\n"
+                "- **Dépendances :** `2026-11-25-w1-alpha`\n"
+                "- **Date / Statut :** `2026-11-25` — `draft`\n\n"
+                "## Ancres exactes\n"
+                "- `plugin/cli.py::main (~L5)`\n",
+                encoding="utf-8",
+            )
+
+            # 1. CLI --export-wave 1 -> stdout JSON wave_plan_v1
+            buf_out = io.StringIO()
+            with contextlib.redirect_stdout(buf_out):
+                rc = waves.main(["--export-wave", "1", "--workspace", str(ws)])
+            self.assertEqual(rc, 0)
+            plan = json.loads(buf_out.getvalue())
+            self.assertEqual(plan["schema_version"], "wave_plan_v1")
+            self.assertEqual(plan["workspace"], str(ws.resolve()))
+            self.assertEqual(plan["wave"], 1)
+            self.assertEqual(len(plan["tasks"]), 2)
+
+            alpha_item, beta_item = plan["tasks"][0], plan["tasks"][1]
+            self.assertEqual(alpha_item["id"], "2026-11-25-w1-alpha")
+            self.assertEqual(alpha_item["title"], "Alpha Lot 1")
+            self.assertEqual(alpha_item["repo_id"], "alpha")
+            self.assertEqual(alpha_item["repo_root"], str(repo_alpha.resolve()))
+            self.assertEqual(alpha_item["expected_branch"], "develop")
+            self.assertEqual(alpha_item["profile"], "quick")
+            self.assertEqual(alpha_item["plan_file"], str(t1_path.resolve()))
+            self.assertEqual(alpha_item["target_files"], ["plugin/core.py"])
+            self.assertEqual(alpha_item["status"], "ready")
+
+            self.assertEqual(beta_item["id"], "2026-11-25-w1-beta")
+            self.assertEqual(beta_item["repo_root"], str(repo_beta.resolve()))
+            self.assertEqual(beta_item["expected_branch"], "feat/dip-w1")
+            self.assertEqual(beta_item["profile"], "standard")
+
+            # 2. CLI --export-wave 1 --out <file>
+            out_file = root / "out" / "wave1.json"
+            buf_file = io.StringIO()
+            with contextlib.redirect_stdout(buf_file):
+                rc_file = waves.main(["--export-wave", "1", "--workspace", str(ws), "--out", str(out_file)])
+            self.assertEqual(rc_file, 0)
+            self.assertTrue(out_file.is_file())
+            self.assertEqual(json.loads(out_file.read_text(encoding="utf-8")), plan)
+
+            # 3. Fail-closed : statut bloqué (draft/done/archived/cancelled) sur vague 2 -> rc=1
+            for blocked in ("draft", "done", "archived", "cancelled"):
+                t3_path.write_text(
+                    "# Alpha Lot 2\n"
+                    "- **Vague :** `2`\n"
+                    "- **Dépôt cible :** `alpha`\n"
+                    "- **Dépendances :** `2026-11-25-w1-alpha`\n"
+                    f"- **Date / Statut :** `2026-11-25` — `{blocked}`\n\n"
+                    "## Ancres exactes\n"
+                    "- `plugin/cli.py::main (~L5)`\n",
+                    encoding="utf-8",
+                )
+                buf_err = io.StringIO()
+                with contextlib.redirect_stderr(buf_err):
+                    rc_blk = waves.main(["--export-wave", "2", "--workspace", str(ws)])
+                self.assertEqual(rc_blk, 1)
+                self.assertIn(blocked, buf_err.getvalue())
+
+            # 4. Fail-closed : vague vide -> rc=1
+            buf_empty = io.StringIO()
+            with contextlib.redirect_stderr(buf_empty):
+                rc_empty = waves.main(["--export-wave", "9", "--workspace", str(ws)])
+            self.assertEqual(rc_empty, 1)
+            self.assertIn("vide", buf_empty.getvalue())
+
+            # 5. Fail-closed : repo_root absent -> rc=1
+            repo_beta.rmdir()
+            buf_missing = io.StringIO()
+            with contextlib.redirect_stderr(buf_missing):
+                rc_missing = waves.main(["--export-wave", "1", "--workspace", str(ws)])
+            self.assertEqual(rc_missing, 1)
+            self.assertIn("repo_root", buf_missing.getvalue())
+            repo_beta.mkdir()
+
+            # 6. Fail-closed : --out sans --export-wave -> rc=1
+            with contextlib.redirect_stderr(io.StringIO()):
+                self.assertEqual(waves.main(["--workspace", str(ws), "--out", str(out_file)]), 1)
+
+            # 7. Fail-closed : profil invalide dans task -> rc=1
+            t1_path.write_text(
+                "# Alpha Lot 1\n- **Vague :** `1`\n- **Dépôt cible :** `alpha`\n- **Profil workflow :** `invalid`\n- **Date / Statut :** `2026-11-25` — `ready`\n## Ancres exactes\n- `plugin/core.py::run (~L10)`\n",
+                encoding="utf-8",
+            )
+            with contextlib.redirect_stderr(io.StringIO()):
+                self.assertEqual(waves.main(["--export-wave", "1", "--workspace", str(ws)]), 1)
 
 
 if __name__ == "__main__":

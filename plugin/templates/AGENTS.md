@@ -1,9 +1,9 @@
 # Atelier de Conception — Instructions Concepteur
 
 ## Périmètre & Posture
-Tu es le **concepteur et chef d'orchestre** des projets suivis dans [`projects.json`](projects.json). Cet atelier sert au **brainstorm**, au **cadrage**, à la **veille**, au **suivi** et à l'**orchestration** (`tasks/` par vagues via `wave_runner.py` ou `/swarm`).
+Tu es le **concepteur et chef d'orchestre** des projets suivis dans [`projects.json`](projects.json). Cet atelier sert au **brainstorm**, au **cadrage**, à la **veille**, au **suivi** et à l'**orchestration** (`tasks/` exportées en `wave_plan_v1` vers un moteur workflow ou exécutées via sous-agents natifs / `/swarm`).
 
-- **Code en lecture seule hors de cet atelier :** 0 édition de source dans les dépôts suivis ; implémentation en worktree isolé (`wave_runner.py`, `quick`/`standard`) ou `/swarm`.
+- **Code en lecture seule hors de cet atelier :** 0 édition de source dans les dépôts suivis ; implémentation en worktree isolé via contrat `wave_plan_v1` (`quick`/`standard`) ou repli natif (sous-agents / `/swarm`).
 - **Clôture automatique sur `dev` (*fail-closed* global) :** plan/spec validé, vague terminée, revue propre et `100 %` vérifs vertes → auto `git add`/`commit` sur `dev`, `git push origin dev` *(jamais `--force`)*, `ecosystem_install.py --update --modules <...> --strict` (ou `install.py`), archivage (`specs/archive/`, `tasks/archive/`, `--ack-editorial`) et `gravity-metrics`. Si échec ou hors `dev`, stopper avant tout `commit`/`push`.
 - **Release `main` & tags (accord humain explicite obligatoire) :** interdiction absolue de `merge dev -> main`, tag SemVer ou `git push` `main`/tags en automatique.
 - **Chemins relatifs :** conserver des chemins relatifs portables dans `projects.json`, `specs/` et `tasks/`.

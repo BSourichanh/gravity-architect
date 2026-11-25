@@ -578,6 +578,7 @@ class TestSyncTracking(unittest.TestCase):
                 "# Task Demo\n"
                 "- **Vague :** `2`\n"
                 "- **Dépôt cible :** `alpha` (`../alpha`)\n"
+                "- **Branche attendue :** `feat/demo-branch`\n"
                 "- **Dépendances :** `2026-11-21-alpha-base`, [`2026-11-21-beta-init.md`](2026-11-21-beta-init.md) *(requis)*\n"
                 "- **Profil workflow :** `deep`\n"
                 "- **Date / Statut :** `2026-11-22` — `ready`\n"
@@ -606,6 +607,7 @@ class TestSyncTracking(unittest.TestCase):
             self.assertEqual(task["dependencies"], ["2026-11-21-alpha-base", "2026-11-21-beta-init"])
             self.assertEqual(task["workflow_profile"], "deep")
             self.assertEqual(task["target_project"], "alpha")
+            self.assertEqual(task["expected_branch"], "feat/demo-branch")
             self.assertEqual(task["target_files"], ["src/inline.py", "src/main.py", "tests/test_main.py"])
             self.assertEqual(task["anchors"]["src/inline.py"], ["src/inline.py::run (~L10-L20)", "src/inline.py::helper (~L30)"])
             self.assertEqual(task["anchors"]["src/main.py"], ["src/main.py::main (~L1-L15)", "src/main.py::boot (~L20)"])
@@ -613,6 +615,7 @@ class TestSyncTracking(unittest.TestCase):
             bad_task = arts["pending_tasks"][0]
             self.assertIsNone(bad_task["wave"])
             self.assertEqual(bad_task["wave_raw"], "vague-x")
+            self.assertEqual(bad_task["expected_branch"], "")
 
             blk = sync_tracking._format_project_tasks_block(
                 "alpha",

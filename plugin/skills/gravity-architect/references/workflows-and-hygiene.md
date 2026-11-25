@@ -2,16 +2,16 @@
 
 Fiche de référence chargée à la demande depuis [`SKILL.md`](../SKILL.md) *(progressive disclosure : 0 taxe tokens au chargement initial)*.
 
-## 1. Post-task, vagues & Exécution native (`wave_runner.py` / `/swarm`)
+## 1. Post-task, vagues & Contrat `wave_plan_v1` / Exécution native
 
 ### Statut obligatoire après rédaction d'une task
 - Après création de `tasks/<YYYY-MM-DD>-<projet>-<slug>.md` (vague, dépendances, `Profil workflow` `quick` ou `standard`, ancres hybrides `::` / `~L`, plafond `<= 5` fichiers code hors tests/docs) et contrôle via `python "<PLUGIN_DIR>/core/waves.py" --check-waves --workspace .`, afficher explicitement le statut **`rédigé, non déployé`**.
-- Rappeler à l'utilisateur la possibilité de lancer la vague en natif via `run_workflow` (`wave_runner.py`) ou `/swarm` (sans jamais lancer d'exécution de code sans feu vert humain).
+- Rappeler à l'utilisateur la possibilité de compiler la vague en `wave_plan_v1` (`--export-wave <N>`) pour l'exécuter via un moteur workflow optionnel ou le repli autonome natif (sous-agents / `/swarm`), sans jamais lancer d'exécution de code sans feu vert humain.
 
 ### Lancement & isolation `git worktree` en Production
-- **Par défaut (`run_workflow` + `wave_runner.py`) :** exécute les `tasks/` en `parallel` *fail-isolated* (`try/except` par dépôt) sur des `git worktree` temporaires créés sous `$GRAVITY_HOME/workflow/worktrees/<repo>-<id>` (jamais dans `../<repo>` ni `.gemini/antigravity/` hors `worktrees/`), lit `tasks/*.md` + `<repo>/AGENTS.md` en Python (`0` token), saute `Planner` (`skip_separate_planner=True` dès qu'un `plan_file` est fourni), applique sur `dev` uniquement si `PASS` (`apply_on_pass=True`) et garantit le nettoyage en `try/finally` (`cleanup_worktree_best_effort`).
-- **Routage par risque (`quick` vs `standard`) & watchdogs :** utiliser `quick` (`Reviewer flash` à froid) sur docs, templates, UI ou CLI simples, et `standard` (`Reviewer pro`) sur sécurité, hooks, AST, installeur ou noyau `core/`. Watchdogs durs `asyncio.wait_for` (`Builder 15m` / `900s`, `Reviewer 6m` / `360s`) ; retour JSON compact (`<= 10` lignes/dépôt, `changed_files` `1..20`).
-- **Option `/swarm` natif :** réserver `/swarm` aux chantiers exploratoires ou couplés entre dépôts nécessitant une coordination directe entre agents, tout en gardant la session racine en lecture seule sur le code suivi.
+- **Compilation neutre (`core/waves.py --export-wave <N>`) :** compile une vague validée (*fail-closed* : bloque vague vide, erreur DAG/ancres, profil invalide, `repo_root` introuvable ou statut `draft`/`done`/`archived`/`cancelled`) en manifeste JSON `wave_plan_v1` (`schema_version`, `workspace`, `wave`, `tasks` avec `repo_id`, `repo_root`, `expected_branch`, `profile`, `plan_file`, `target_files`, `status`).
+- **Moteur workflow optionnel recommandé (`gravity-workflow`, si installé) :** consomme directement le contrat `wave_plan_v1` via `run_workflow` en `git worktree` isolés et parallèles (*fail-isolated* par dépôt), en routant `quick` sur docs, templates, UI ou CLI simples et `standard` sur sécurité, hooks, AST, installeur ou noyau `core/`.
+- **Repli autonome natif (si `gravity-workflow` absent ou chantier couplé) :** orchestrer la vague en `git worktree` temporaires isolés (jamais d'édition directe dans `../<repo>`) via sous-agents natifs ou `/swarm`, valider chaque lot avant intégration sur `dev` et nettoyer les worktrees en sortie.
 
 ## 2. Hygiène tokens, Plan Mode & délégation
 
@@ -69,5 +69,5 @@ Respecter strictement ces 4 étapes en fin de cycle :
 - **`/gravity-architect "<instruction>"` :** orchestre un cycle structuré en **4 phases** :
   1. **Conception :** délégation `research` lecture seule → challenge `/grill-me` → cadrage `/plan` et rédaction `specs/<YYYY-MM-DD>-<slug>.md`.
   2. **Planification :** ancrage exact des symboles et plages de lignes issus de `research` (`::` / `~L`) → découpage `tasks/<YYYY-MM-DD>-<projet>-<slug>.md` (`<= 5` fichiers code, profil `quick` ou `standard`) → contrôle `core/waves.py --check-waves` → **1 checkpoint unique** présenté via artefact (`RequestFeedback=True`) **et/ou `ask_question` explicite** *(bouton `Proceed` absent sur certaines surfaces Antigravity)*.
-  3. **Production :** exécution 100 % native via `run_workflow` (`wave_runner.py`, `parallel` *fail-isolated* en `git worktree` temporaires, `apply_on_pass=True`, saut `Planner` si `plan_file`, routage `quick`=`Reviewer flash` / `standard`=`Reviewer pro`, watchdogs `15m`/`6m`) ou `/swarm` natif si chantier couplé, retour compact `<= 10` lignes/dépôt, mini-checkpoint sur `dev` entre vagues et `/compact` racine dès `> 250k` tokens.
+  3. **Production :** compilation via `core/waves.py --export-wave <N>` (`wave_plan_v1`) puis exécution en `git worktree` isolés via moteur workflow optionnel recommandé (`gravity-workflow`, profil `quick` ou `standard`) ou repli autonome natif (sous-agents / `/swarm`), retour compact `<= 10` lignes/dépôt, mini-checkpoint sur `dev` entre vagues et `/compact` racine dès `> 250k` tokens.
   4. **Validation :** exécution de `verify_commands` (`100 %` vertes, *fail-closed* global, ex. `audit_ecosystem.py --verify-parallel --strict`) → `git add`/`commit`/`push origin dev` *(jamais `--force`)* → archivage (`specs/archive/`, `tasks/archive/`, `--offline --ack-editorial`) → mise à jour des docs écosystème → réinstallation en fin de Validation uniquement (`ecosystem_install.py --update --modules <...> --strict`) → récapitulatif final → clôture optionnelle `gravity-metrics` (§3).

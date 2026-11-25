@@ -12,7 +12,7 @@ Détails (4 phases, exécution native, Plan Mode, clôture, onboarding) : [workf
 
 ## Règles strictes
 1. **Moteur :** scripts dans `~/.gemini/config/plugins/gravity-architect/scripts/` (ou `./plugin/scripts/`).
-2. **Code en lecture seule hors atelier :** 0 édition de source dans les dépôts suivis (`projects.json`) ; implémentation en worktree isolé (`wave_runner.py` ou `/swarm`).
+2. **Code en lecture seule hors atelier :** 0 édition de source dans les dépôts suivis (`projects.json`) ; implémentation en worktree isolé (`wave_plan_v1` ou repli natif sous-agents / `/swarm`).
    - **Clôture Git & installation :** plan/spec validé, vague terminée, revue propre et `100 %` vérifs vertes (*fail-closed* ; stopper avant `commit`/`push` si échec ou hors `dev`) → `git add`/`commit` `dev` + `git push origin dev` *(jamais `--force`)* + `ecosystem_install.py --update --modules <...> --strict` (`python3` POSIX, `python` Win, fin Validation seule). `merge dev -> main`, tag et release sur accord humain explicite seul.
 3. **Hygiène tokens & Plan Mode :** `sync_tracking.py --print-delta` avant inspection ; déléguer multi-fichiers à `research` RO ; 0 spec/task dans `exit_plan_mode(plan=...)` ; `/compact` post-tasks et racine `> 250k` tokens.
 4. **Registre :** `init_workspace.py` / `sync_tracking.py` (hors `--check`/`--dry-run`/`--discover`) inscrivent l'atelier dans `<architect_home>/ateliers.json` (`GRAVITY_ARCHITECT_SKIP_REGISTRY=1` opt-out).
@@ -24,7 +24,7 @@ Détails (4 phases, exécution native, Plan Mode, clôture, onboarding) : [workf
 - **`"<instruction>"` :** cycle **4 phases** ([`workflows-and-hygiene.md`](references/workflows-and-hygiene.md) §6) :
   1. **Conception :** `research` RO + `/grill-me` + `/plan` (`specs/`).
   2. **Planification :** ancres `research` (`::`/`~L`) + `tasks/` (`<= 5` code, `quick`|`standard`) + `core/waves.py --check-waves` + **1 checkpoint unique** (`RequestFeedback=True` **et/ou `ask_question`**, *`Proceed` absent sur certaines surfaces*).
-  3. **Production :** `run_workflow` (`wave_runner.py` `parallel` *fail-isolated*, worktrees, 0 `Planner` si `plan_file`, `quick`=Reviewer `flash` / `standard`=Reviewer `pro`, watchdog `15m`/`6m`, `apply_on_pass=True`, retour `<= 10` lignes/dépôt) ou `/swarm` + mini-checkpoint `dev` + `/compact` `> 250k`.
+  3. **Production :** `core/waves.py --export-wave <N>` (`wave_plan_v1`) en `git worktree` isolés (moteur optionnel `gravity-workflow`, `quick`/`standard`, ou repli natif sous-agents / `/swarm`), retour `<= 10` lignes/dépôt + checkpoint `dev` + `/compact` `> 250k`.
   4. **Validation :** `verify_commands` (`100 %` vertes, *fail-closed*, ex. `audit_ecosystem.py --verify-parallel --strict`) → commit/push `dev` → archive (`specs/archive/`, `tasks/archive/`, `--offline --ack-editorial`) → docs → réinstall fin Validation (`ecosystem_install.py --update --modules <...> --strict`) → `gravity-metrics`.
 
 ### 1. `/gravity-architect init` *(onboarding guidé)*
@@ -43,7 +43,7 @@ Détails (4 phases, exécution native, Plan Mode, clôture, onboarding) : [workf
 
 ### 4. `spec <slug>` · `task <projet> <slug>` · `archive <slug>`
 - **`spec <slug>` :** challenger le besoin, créer `specs/<YYYY-MM-DD>-<slug>.md` depuis `specs/_TEMPLATE.md`.
-- **`task <projet> <slug>` :** créer `tasks/<YYYY-MM-DD>-<projet>-<slug>.md` (vague, dépendances, `quick`|`standard`, `::`/`~L`, `<= 5` code, vérifs) → `core/waves.py --check-waves`. Afficher `rédigé, non déployé` et proposer `wave_runner.py` ou `/swarm` après **1 `ask_question` récapitulatif**.
+- **`task <projet> <slug>` :** créer `tasks/<YYYY-MM-DD>-<projet>-<slug>.md` (vague, dépendances, `quick`|`standard`, `::`/`~L`, `<= 5` code, vérifs) → `core/waves.py --check-waves`. Afficher `rédigé, non déployé` et proposer `wave_plan_v1` (`--export-wave`) ou `/swarm` après **1 `ask_question` récapitulatif**.
 - **`archive <slug>` :** après vérifs, commit/push `dev` et install, archiver (`specs/archive/`, `tasks/archive/`, `done`), `--offline --ack-editorial --print-delta`, puis clôture `gravity-metrics` ([`workflows-and-hygiene.md`](references/workflows-and-hygiene.md) §3).
 
 ### 5. `/gravity-architect audit [projet|all]` *(Code & Architecture)*
