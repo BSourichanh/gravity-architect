@@ -991,8 +991,14 @@ class TestInitAndInstall(unittest.TestCase):
 
             # 4. install.py + fix_python_cmd sous Windows simulé (source intacte)
             src_hooks_before = (PLUGIN_ROOT / "hooks.json").read_text(encoding="utf-8")
+            class _FakeWindowsOs:
+                name = "nt"
+
+                def __getattr__(self, attr: str):
+                    return getattr(os, attr)
+
             target_win = root / "inst-win"
-            with mock.patch("install.os.name", "nt"), mock.patch("install.has_real_python3", return_value=False):
+            with mock.patch.object(install, "os", _FakeWindowsOs()), mock.patch("install.has_real_python3", return_value=False):
                 dry_buf = io.StringIO()
                 with contextlib.redirect_stdout(dry_buf):
                     self.assertEqual(install.main(["--dry-run", "--target", str(target_win)]), 0)
