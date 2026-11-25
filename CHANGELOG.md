@@ -8,6 +8,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Changed
+- **Vagues multi-dépôts (`core/waves.py`), RO Phase 4 (`CHANGELOG.md` worktree) & briefs `/swarm` :**
+  - Scopé `wave_file_owner` dans `validate_waves()` par `(raw_wave, target_proj, nf)` pour autoriser `CHANGELOG.md` (ou tout fichier homologue non-code) sur plusieurs dépôts d'une même vague tout en conservant la détection de collision intra-dépôt.
+  - Mis à jour `plugin/templates/task-template.md` (`CHANGELOG.md` non-code en `## Périmètre`, commandes multi-OS `python3`) et `plugin/skills/gravity-architect/references/workflows-and-hygiene.md` (RO strict Phase 4 sans édition directe `CHANGELOG.md` racine, directive Caveman 1 ligne `/swarm`, chemins exacts `tasks/*.md` au `reviewer`, `grep -rn` Linux).
+  - Adapté `tests/test_waves.py` (`test_target_files_collision_normalizes_anchors_and_prefixes` en collision intra-dépôt + test multi-dépôts Vague 1 `CHANGELOG.md` avec 5 fichiers code).
 - **Contrat DIP `wave_plan_v1` & autonomie Phase 3 (`core/io_utils.py`, `core/waves.py`, templates, skills, README) :**
   - Extraction de `expected_branch` (`Branche attendue`) dans `parse_artifact_file()`, résolution `id -> (repo_root, default_dev_branch)` depuis `projects.json` et validation de `workflow_profile` (`quick|standard|deep`) dans `core/waves.py`.
   - Ajout de `export_wave()` et des flags `--export-wave <N>` / `--out <PATH>` (*fail-closed* : rejette vague vide, erreur `validate_waves`, `repo_root` absent ou statut `draft`/`done`/`archived`/`cancelled`).

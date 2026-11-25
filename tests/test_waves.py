@@ -110,7 +110,7 @@ class TestWavesValidation(unittest.TestCase):
             _make_task(
                 "t2",
                 wave=1,
-                target_project="beta",
+                target_project="alpha",
                 target_files=["src\\shared.py (~L50-L70)"],
                 anchors={"src/shared.py": ["src/shared.py (~L50-L70)"]},
             ),
@@ -118,6 +118,29 @@ class TestWavesValidation(unittest.TestCase):
         res = waves.validate_waves(tasks)
         self.assertFalse(res["ok"])
         self.assertTrue(any("fichier cible `src/shared.py` partagé" in e for e in res["errors"]), res["errors"])
+
+    def test_multi_repo_same_wave_allows_shared_changelog_without_consuming_code_quota(self) -> None:
+        tasks = [
+            _make_task(
+                "t-alpha",
+                wave=1,
+                target_project="alpha",
+                target_files=[f"src/a{i}.py" for i in range(1, 6)] + ["CHANGELOG.md"],
+                anchors={f"src/a{i}.py": [f"src/a{i}.py::fn_{i}"] for i in range(1, 6)},
+            ),
+            _make_task(
+                "t-beta",
+                wave=1,
+                target_project="beta",
+                target_files=[f"lib/b{i}.py" for i in range(1, 6)] + ["CHANGELOG.md"],
+                anchors={f"lib/b{i}.py": [f"lib/b{i}.py::fn_{i}"] for i in range(1, 6)},
+            ),
+        ]
+        cfg = {"projects": [{"id": "alpha"}, {"id": "beta"}]}
+        res = waves.validate_waves(tasks, projects_cfg=cfg)
+        self.assertTrue(res["ok"], res["errors"])
+        self.assertEqual(res["errors"], [])
+        self.assertEqual(res["waves"], {1: ["t-alpha", "t-beta"]})
 
     def test_dag_cycle_self_dep_missing_dep_and_wave_order(self) -> None:
         tasks = [

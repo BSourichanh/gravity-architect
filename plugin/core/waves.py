@@ -112,7 +112,7 @@ def validate_waves(tasks: list[dict], projects_cfg: dict | list | set | tuple | 
     deps_map: dict[str, list[str]] = {}
     waves_grouped: dict[int, list[str]] = {}
     wave_project_owner: dict[tuple[int, str], str] = {}
-    wave_file_owner: dict[tuple[int, str], str] = {}
+    wave_file_owner: dict[tuple[int, str, str], str] = {}
 
     for idx, task in enumerate(tasks):
         if not isinstance(task, dict):
@@ -156,10 +156,10 @@ def validate_waves(tasks: list[dict], projects_cfg: dict | list | set | tuple | 
 
         if valid_wave:
             for nf in norm_files:
-                wf_key = (raw_wave, nf)
+                wf_key = (raw_wave, target_proj, nf)
                 if wf_key in wave_file_owner:
                     errors.append(
-                        f"Vague {raw_wave} : fichier cible `{nf}` partagé entre "
+                        f"Vague {raw_wave} (`{target_proj}`) : fichier cible `{nf}` partagé entre "
                         f"`{wave_file_owner[wf_key]}` et `{tid}`."
                     )
                 else:
