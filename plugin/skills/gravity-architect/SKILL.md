@@ -24,7 +24,7 @@ Détails (4 phases, exécution native, Plan Mode, clôture, onboarding) : [workf
 - **`"<instruction>"` :** cycle **4 phases** ([`workflows-and-hygiene.md`](references/workflows-and-hygiene.md) §6) :
   1. **Conception :** `research` RO + `/grill-me` + `/plan` (`specs/`).
   2. **Planification :** ancres `research` (`::`/`~L`) + `tasks/` (`<= 5` code, `quick`|`standard`) + `core/waves.py --check-waves` + **1 checkpoint unique** (`RequestFeedback=True` **et/ou `ask_question`**, *`Proceed` absent sur certaines surfaces*).
-  3. **Production :** `core/waves.py --export-wave <N>` (`wave_plan_v1`) en `git worktree` isolés (moteur optionnel `gravity-workflow`, `quick`/`standard`, ou repli natif sous-agents / `/swarm`), retour `<= 10` lignes/dépôt + checkpoint `dev` + `/compact` `> 250k`.
+  3. **Production :** `core/waves.py --export-wave <N>` (`wave_plan_v1`) en `git worktree` isolés (`gravity-workflow` `quick`|`standard` ou sous-agents / `/swarm`), retour `<= 10` l./dépôt, titres `update_steps` métier (0 « Vague N »), checkpoint `dev`, `/compact` `> 250k`.
   4. **Validation :** `verify_commands` (`100 %` vertes, *fail-closed*, ex. `audit_ecosystem.py --verify-parallel --strict`) → commit/push `dev` → archive (`specs/archive/`, `tasks/archive/`, `--offline --ack-editorial`) → docs → réinstall fin Validation (`ecosystem_install.py --update --modules <...> --strict`) → `gravity-metrics`.
 
 ### 1. `/gravity-architect init` *(onboarding guidé)*

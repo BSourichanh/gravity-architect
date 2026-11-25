@@ -8,6 +8,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Changed
+- **Libellés explicites `update_steps` (`SKILL.md`, `workflows-and-hygiene.md`) :**
+  - Exigé des titres orientés objectif métier en 3–6 mots pour `update_steps` (prohibant les libellés génériques numérotés du type `Vague N`).
 - **Vagues multi-dépôts (`core/waves.py`), RO Phase 4 (`CHANGELOG.md` worktree) & briefs `/swarm` :**
   - Scopé `wave_file_owner` dans `validate_waves()` par `(raw_wave, target_proj, nf)` pour autoriser `CHANGELOG.md` (ou tout fichier homologue non-code) sur plusieurs dépôts d'une même vague tout en conservant la détection de collision intra-dépôt.
   - Mis à jour `plugin/templates/task-template.md` (`CHANGELOG.md` non-code en `## Périmètre`, commandes multi-OS `python3`) et `plugin/skills/gravity-architect/references/workflows-and-hygiene.md` (RO strict Phase 4 sans édition directe `CHANGELOG.md` racine, directive Caveman 1 ligne `/swarm`, chemins exacts `tasks/*.md` au `reviewer`, `grep -rn` Linux).
