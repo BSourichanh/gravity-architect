@@ -939,6 +939,7 @@ class TestInitAndInstall(unittest.TestCase):
             ("SKILL.md", skill_txt),
             ("workflows-and-hygiene.md", ref_txt),
             ("plugin/README.md", plugin_readme_txt),
+            ("README.md", repo_readme_txt),
         ):
             for forbidden in (
                 "wave_runner.py",
@@ -948,6 +949,19 @@ class TestInitAndInstall(unittest.TestCase):
                 "apply_on_pass",
             ):
                 self.assertNotIn(forbidden, doc_txt, f"Référence interne workflow `{forbidden}` dans {doc_label}")
+
+        # Bascule Swarm optimisé par défaut (run_workflow en opt-in explicite)
+        for doc_label, doc_txt in (
+            ("SKILL.md", skill_txt),
+            ("workflows-and-hygiene.md", ref_txt),
+            ("templates/AGENTS.md", tpl_agents_txt),
+            ("plugin/README.md", plugin_readme_txt),
+            ("README.md", repo_readme_txt),
+        ):
+            self.assertIn("opt-in", doc_txt, f"Mention opt-in manquante pour run_workflow dans {doc_label}")
+            self.assertIn("swarm", doc_txt.lower(), f"Mention swarm manquante dans {doc_label}")
+        for swarm_tok in ("waiting", "fork", "@monitor", "3.8 Flash"):
+            self.assertIn(swarm_tok, ref_txt, f"Détail topologie Swarm manquant dans workflows-and-hygiene.md : {swarm_tok}")
 
     def test_validate_int01_03_06_and_fix_python_cmd_install(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

@@ -8,6 +8,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Changed
+- **Orchestration Swarm optimisée par défaut en Phase 3 Production (`SKILL.md`, `workflows-and-hygiene.md`, `templates/AGENTS.md`, `README.md`, `plugin/README.md`, `tests/test_init_and_install.py`) :**
+  - Bascule du mode par défaut de Phase 3 Production sur l'outil natif `swarm` (`/swarm` optimisé depuis `wave_plan_v1` en `git worktree` isolés) tout en reléguant `run_workflow` au statut d'opt-in explicite.
+  - Documentation de la topologie Swarm optimisée dans `workflows-and-hygiene.md` (builders modèle rapide `Hydrogen`/`3.8 Flash` en worktree détaché, cache chaud `waiting` + `kill` post-apply, reviewer à froid sans `fork` adaptatif `quick` vs `standard`/`deep`, zéro `@monitor` par défaut).
+  - Retrait des dernières mentions `wave_runner.py` dans `README.md` et ajout d'assertions de non-régression dans `tests/test_init_and_install.py`.
 - **Libellés explicites `update_steps` (`SKILL.md`, `workflows-and-hygiene.md`) :**
   - Exigé des titres orientés objectif métier en 3–6 mots pour `update_steps` (prohibant les libellés génériques numérotés du type `Vague N`).
 - **Vagues multi-dépôts (`core/waves.py`), RO Phase 4 (`CHANGELOG.md` worktree) & briefs `/swarm` :**
