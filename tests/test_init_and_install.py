@@ -1041,6 +1041,128 @@ class TestInitAndInstall(unittest.TestCase):
                 )
             self.assertEqual((PLUGIN_ROOT / "hooks.json").read_text(encoding="utf-8"), src_hooks_before)
 
+    def test_install_records_sources_json_only_on_real_global_install(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            fake_home = root / "home"
+            fake_home.mkdir()
+            gravity_home = root / "gravity-home"
+            sources_path = gravity_home / "core" / "sources.json"
+            sources_path.parent.mkdir(parents=True, exist_ok=True)
+            existing_gravity_entry = {
+                "plugin_name": "gravity",
+                "repo_dir": str(root / "gravity"),
+                "install_method": "copy",
+                "installed_version": "0.3.0",
+            }
+            sources_path.write_text(
+                json.dumps(
+                    {
+                        "schema_version": 1,
+                        "updated_at": "2026-11-25T10:00:00Z",
+                        "sources": {"gravity": existing_gravity_entry},
+                    },
+                    indent=2,
+                )
+                + "\n",
+                encoding="utf-8",
+                newline="\n",
+            )
+
+            ws_dir = root / "workspace"
+            ws_dir.mkdir()
+            custom_target = root / "custom-target" / "gravity-architect"
+            global_target = (fake_home / ".gemini" / "config" / "plugins" / "gravity-architect").resolve()
+
+            with (
+                mock.patch.object(Path, "home", return_value=fake_home),
+                mock.patch.dict(os.environ, {"GRAVITY_HOME": str(gravity_home)}),
+            ):
+                # 1. Cas sans écriture dans sources.json : --check, --dry-run, --scope workspace, --target
+                self.assertEqual(install.main(["--check"]), 0)
+                self.assertEqual(install.main(["--dry-run"]), 0)
+                self.assertEqual(install.main(["--scope", "workspace", "--workspace", str(ws_dir)]), 0)
+                self.assertEqual(install.main(["--target", str(custom_target)]), 0)
+
+                mid_payload = json.loads(sources_path.read_text(encoding="utf-8"))
+                self.assertNotIn("gravity-architect", mid_payload["sources"])
+                self.assertEqual(mid_payload["sources"]["gravity"], existing_gravity_entry)
+
+                # 2. Installation globale réelle -> enregistre gravity-architect et préserve gravity
+                self.assertEqual(install.main(["--scope", "global"]), 0)
+                self.assertTrue(install.is_gravity_architect_plugin_dir(global_target))
+                self.assertFalse((global_target / ".gravity-source.json").exists())
+
+                raw_bytes = sources_path.read_bytes()
+                self.assertFalse(raw_bytes.startswith(b"\xef\xbb\xbf"))
+                self.assertNotIn(b"\r\n", raw_bytes)
+
+                payload = json.loads(raw_bytes.decode("utf-8"))
+                self.assertEqual(payload["schema_version"], 1)
+                self.assertRegex(payload["updated_at"], r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$")
+                self.assertEqual(payload["sources"]["gravity"], existing_gravity_entry)
+
+                entry = payload["sources"]["gravity-architect"]
+                self.assertEqual(
+                    set(entry.keys()),
+                    {
+                        "plugin_name",
+                        "repo_dir",
+                        "repository",
+                        "install_method",
+                        "target_dir",
+                        "git_branch",
+                        "git_sha",
+                        "installed_version",
+                        "installed_at",
+                    },
+                )
+                manifest = json.loads((PLUGIN_ROOT / "plugin.json").read_text(encoding="utf-8"))
+                self.assertEqual(entry["plugin_name"], "gravity-architect")
+                self.assertEqual(Path(entry["repo_dir"]), REPO_ROOT.resolve())
+                self.assertEqual(entry["repository"], manifest["repository"])
+                self.assertEqual(entry["install_method"], "copy")
+                self.assertEqual(Path(entry["target_dir"]), global_target)
+                self.assertEqual(entry["installed_version"], manifest["version"])
+                self.assertRegex(entry["installed_at"], r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$")
+                self.assertTrue(entry["git_sha"])
+
+                # 3. Réinstall refusée sans --force (rc=1) ni --uninstall ne réécrit sources.json
+                before_fail = sources_path.read_text(encoding="utf-8")
+                self.assertEqual(install.main([]), 1)
+                self.assertEqual(sources_path.read_text(encoding="utf-8"), before_fail)
+
+                self.assertEqual(install.main(["--uninstall"]), 0)
+                self.assertFalse(global_target.exists())
+                self.assertEqual(sources_path.read_text(encoding="utf-8"), before_fail)
+
+                # 4. --method agy global réel
+                ok_proc = subprocess.CompletedProcess(args=["agy"], returncode=0, stdout="", stderr="")
+                with (
+                    mock.patch("shutil.which", return_value="/usr/bin/agy"),
+                    mock.patch.object(install, "_run_subprocess", return_value=ok_proc),
+                ):
+                    self.assertEqual(install.main(["--method", "agy"]), 0)
+                agy_entry = json.loads(sources_path.read_text(encoding="utf-8"))["sources"]["gravity-architect"]
+                self.assertEqual(agy_entry["install_method"], "agy")
+                self.assertIsNone(agy_entry["target_dir"])
+
+                # 5. Tolérance absence de git / .git et repli ~/.gemini/gravity sans GRAVITY_HOME
+                no_git_repo = root / "no-git-repo"
+                no_git_repo.mkdir()
+                with mock.patch.dict(os.environ, {"GRAVITY_HOME": ""}):
+                    written = install._record_install_source(
+                        PLUGIN_ROOT,
+                        global_target,
+                        method="copy",
+                        repo_dir=no_git_repo,
+                    )
+                fallback_path = (fake_home / ".gemini" / "gravity" / "core" / "sources.json").resolve()
+                self.assertEqual(written, fallback_path)
+                fallback_entry = json.loads(fallback_path.read_text(encoding="utf-8"))["sources"]["gravity-architect"]
+                self.assertIsNone(fallback_entry["git_branch"])
+                self.assertIsNone(fallback_entry["git_sha"])
+
 
 if __name__ == "__main__":
     unittest.main()
