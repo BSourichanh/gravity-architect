@@ -11,6 +11,8 @@ PLUGIN_ROOT = Path(__file__).resolve().parent.parent
 if str(PLUGIN_ROOT) not in sys.path:
     sys.path.insert(0, str(PLUGIN_ROOT))
 
+from _shared.atomic_io import write_json_atomic  # noqa: E402
+from _shared.path_safety import is_symlink_or_junction  # noqa: E402
 from core.io_utils import (  # noqa: E402
     HYBRID_ANCHOR_RE,
     configure_utf8_stdio,
@@ -18,7 +20,6 @@ from core.io_utils import (  # noqa: E402
     normalize_target_file,
     resolve_workspace_root,
     scan_md_dir,
-    write_utf8,
 )
 
 MAX_CODE_FILES_PER_TASK = 5
@@ -45,6 +46,25 @@ def is_non_code_file(path_str: str) -> bool:
     )
 
 
+def _resolve_self_atelier_spec(
+    projects_cfg: dict | list | set | tuple | None, base_dir: Path | None
+) -> dict[str, dict]:
+    """Retourne les entrées projet auto-référencées de l'atelier (`atelier_id` / `base_dir.name`)."""
+    if not isinstance(projects_cfg, dict):
+        return {}
+    dev_default = str(projects_cfg.get("refonte_branch") or "dev").strip() or "dev"
+    self_ids: list[str] = []
+    if aid := str(projects_cfg.get("atelier_id") or "").strip():
+        self_ids.append(aid)
+    if base_dir is not None and base_dir.name and base_dir.name not in self_ids:
+        self_ids.append(base_dir.name)
+    resolved_dir = base_dir.resolve() if base_dir is not None else None
+    return {
+        sid: {"id": sid, "path": ".", "repo_root": resolved_dir, "default_dev_branch": dev_default}
+        for sid in self_ids
+    }
+
+
 def _extract_project_specs(
     projects_cfg: dict | list | set | tuple | None, *, base_dir: Path | None = None
 ) -> dict[str, dict] | None:
@@ -67,21 +87,8 @@ def _extract_project_specs(
             pid = item.strip()
             specs[pid] = {"id": pid, "path": "", "repo_root": None, "default_dev_branch": "dev"}
 
-    if isinstance(projects_cfg, dict):
-        dev_default = str(projects_cfg.get("refonte_branch") or "dev").strip() or "dev"
-        self_ids: list[str] = []
-        if aid := str(projects_cfg.get("atelier_id") or "").strip():
-            self_ids.append(aid)
-        if base_dir is not None and base_dir.name and base_dir.name not in self_ids:
-            self_ids.append(base_dir.name)
-        for sid in self_ids:
-            if sid not in specs:
-                specs[sid] = {
-                    "id": sid,
-                    "path": ".",
-                    "repo_root": base_dir.resolve() if base_dir is not None else None,
-                    "default_dev_branch": dev_default,
-                }
+    for sid, spec in _resolve_self_atelier_spec(projects_cfg, base_dir).items():
+        specs.setdefault(sid, spec)
     return specs
 
 
@@ -468,7 +475,6 @@ def export_wave(
 
     selected.sort(key=lambda item: item[0])
     exported_tasks: list[dict] = []
-    wave_names: list[str] = []
     for tid, task in selected:
         status_raw = str(task.get("status") or "").strip()
         if status_raw.lower() in BLOCKED_EXPORT_STATUSES:
@@ -499,6 +505,7 @@ def export_wave(
         item_out: dict = {
             "id": tid,
             "title": str(task.get("title") or tid).strip() or tid,
+            "spec_id": str(task.get("spec_id") or "").strip(),
             "repo_id": repo_id,
             "repo_root": str(repo_root),
             "expected_branch": expected_branch,
@@ -509,19 +516,17 @@ def export_wave(
         }
         if t_wname := str(task.get("wave_name") or "").strip():
             item_out["wave_name"] = t_wname
-            if t_wname not in wave_names:
-                wave_names.append(t_wname)
         exported_tasks.append(item_out)
 
-    plan_out: dict = {
+    raw_wnames = [str(t.get("wave_name") or "").strip() for _, t in selected]
+    resolved_wave_name = " | ".join(dict.fromkeys(w for w in raw_wnames if w))
+    return {
         "schema_version": WAVE_PLAN_SCHEMA_VERSION,
         "workspace": str(ws_resolved),
         "wave": wave,
+        "wave_name": resolved_wave_name,
         "tasks": exported_tasks,
     }
-    if wave_names:
-        plan_out["wave_name"] = wave_names[0]
-    return plan_out
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -537,6 +542,11 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def _reject_symlink_arg(raw_path: Path | None, label: str) -> None:
+    if raw_path is not None and is_symlink_or_junction(raw_path.expanduser()):
+        raise ValueError(f"Chemin {label} symlink/junction interdit : {raw_path}")
+
+
 def main(argv: list[str] | None = None) -> int:
     """Point d'entrée CLI pour `core/waves.py`."""
     configure_utf8_stdio()
@@ -544,15 +554,25 @@ def main(argv: list[str] | None = None) -> int:
     try:
         if args.out is not None and args.export_wave is None:
             raise ValueError("--out requiert --export-wave <N>.")
+        _reject_symlink_arg(args.workspace, "--workspace")
+        _reject_symlink_arg(args.tasks_dir, "--tasks-dir")
+        _reject_symlink_arg(args.config, "--config")
+        _reject_symlink_arg(args.out, "--out")
 
         if args.tasks_dir is not None:
             tasks_dir = args.tasks_dir.expanduser().resolve()
             concept_root = args.workspace.expanduser().resolve() if args.workspace is not None else tasks_dir.parent
-            cfg_path = args.config.expanduser().resolve() if args.config is not None else (concept_root / "projects.json")
+            raw_cfg = args.config.expanduser() if args.config is not None else (concept_root / "projects.json")
+            if is_symlink_or_junction(raw_cfg):
+                raise ValueError(f"Fichier projects.json symlink/junction interdit : {raw_cfg}")
+            cfg_path = raw_cfg.resolve()
             projects_cfg = load_config(cfg_path) if cfg_path.is_file() else None
         else:
             concept_root, cfg_path = resolve_workspace_root(config_arg=args.config, workspace_arg=args.workspace)
-            tasks_dir = concept_root / "tasks"
+            raw_tasks = concept_root / "tasks"
+            if is_symlink_or_junction(raw_tasks) or is_symlink_or_junction(cfg_path):
+                raise ValueError("Chemin tasks/ ou projects.json symlink/junction interdit.")
+            tasks_dir = raw_tasks
             projects_cfg = load_config(cfg_path) if cfg_path.is_file() else None
 
         scan_root = concept_root if tasks_dir.is_relative_to(concept_root) else tasks_dir.parent
@@ -568,8 +588,11 @@ def main(argv: list[str] | None = None) -> int:
             )
             serialized = json.dumps(payload, indent=2, ensure_ascii=False)
             if args.out is not None:
-                out_path = args.out.expanduser().resolve()
-                write_utf8(out_path, serialized + "\n")
+                raw_out = args.out.expanduser()
+                if is_symlink_or_junction(raw_out) or is_symlink_or_junction(raw_out.parent):
+                    raise ValueError(f"Chemin de sortie symlink/junction interdit : {raw_out}")
+                out_path = raw_out.resolve()
+                write_json_atomic(out_path, payload, indent=2, ensure_ascii=False)
                 if args.json:
                     print(serialized)
                 else:

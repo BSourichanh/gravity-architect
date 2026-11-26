@@ -349,11 +349,12 @@ class TestWavesValidation(unittest.TestCase):
             self.assertEqual(plan["schema_version"], "wave_plan_v1")
             self.assertEqual(plan["workspace"], str(ws.resolve()))
             self.assertEqual(plan["wave"], 1)
-            self.assertNotIn("wave_name", plan)
+            self.assertEqual(plan["wave_name"], "")
             self.assertEqual(len(plan["tasks"]), 2)
 
             alpha_item, beta_item = plan["tasks"][0], plan["tasks"][1]
             self.assertEqual(alpha_item["id"], "2026-11-25-w1-alpha")
+            self.assertEqual(alpha_item["spec_id"], "")
             self.assertEqual(alpha_item["title"], "Alpha Lot 1")
             self.assertEqual(alpha_item["repo_id"], "alpha")
             self.assertEqual(alpha_item["repo_root"], str(repo_alpha.resolve()))
@@ -572,10 +573,86 @@ class TestWavesValidation(unittest.TestCase):
             self.assertEqual(rc_exp, 0)
             plan = json.loads(buf_exp.getvalue())
             self.assertEqual(plan["wave_name"], "Self Atelier Wave")
+            self.assertEqual(plan["tasks"][0]["spec_id"], "SPEC-WS-01")
             self.assertEqual(plan["tasks"][0]["repo_id"], "my-atelier-id")
             self.assertEqual(plan["tasks"][0]["repo_root"], str(ws.resolve()))
             self.assertEqual(plan["tasks"][0]["expected_branch"], "refonte/socle")
             self.assertEqual(plan["tasks"][0]["wave_name"], "Self Atelier Wave")
+
+            buf_exp2 = io.StringIO()
+            with contextlib.redirect_stdout(buf_exp2):
+                rc_exp2 = waves.main(["--export-wave", "2", "--workspace", str(ws)])
+            self.assertEqual(rc_exp2, 0)
+            plan2 = json.loads(buf_exp2.getvalue())
+            self.assertEqual(plan2["wave_name"], "")
+            self.assertEqual(plan2["tasks"][0]["repo_id"], "gravity-workshop")
+            self.assertEqual(plan2["tasks"][0]["spec_id"], "SPEC-WS-01")
+
+    def test_export_wave_aggregates_distinct_wave_names_and_guards_symlink_out(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            ws = root / "atelier"
+            (ws / "specs").mkdir(parents=True)
+            (ws / "tasks").mkdir(parents=True)
+            for name in ("alpha", "beta", "gamma"):
+                (root / name).mkdir()
+            (ws / "projects.json").write_text(
+                json.dumps({
+                    "schema_version": 6,
+                    "projects": [
+                        {"id": "alpha", "path": "../alpha"},
+                        {"id": "beta", "path": "../beta"},
+                        {"id": "gamma", "path": "../gamma"},
+                    ],
+                }),
+                encoding="utf-8",
+            )
+            (ws / "specs" / "2026-11-26-spec-multi.md").write_text(
+                "# Spec Multi\n- **Spec ID :** `SPEC-MULTI-01`\n- **Statut :** `validated`\n",
+                encoding="utf-8",
+            )
+            for fname, tid, repo, wname in (
+                ("2026-11-26-w1-a.md", "TASK-A", "alpha", "M4 Alpha — Core"),
+                ("2026-11-26-w1-b.md", "TASK-B", "beta", "M4 Beta — CLI"),
+                ("2026-11-26-w1-c.md", "TASK-C", "gamma", "M4 Alpha — Core"),
+            ):
+                (ws / "tasks" / fname).write_text(
+                    f"# {tid}\n"
+                    f"- **Task ID :** `{tid}`\n"
+                    "- **Spec ID :** `SPEC-MULTI-01`\n"
+                    "- **Spec source :** `specs/2026-11-26-spec-multi.md`\n"
+                    "- **Acceptance Criteria Covered :** `AC-1`\n"
+                    "- **Date / Statut :** `2026-11-26` — `ready`\n"
+                    "- **Vague :** `1`\n"
+                    f"- **Nom de vague :** `{wname}`\n"
+                    f"- **Dépôt cible :** `{repo}`\n\n"
+                    "## Ancres exactes\n"
+                    "- `src/mod.py::run (~L1-L5)`\n",
+                    encoding="utf-8",
+                )
+
+            out_json = root / "exports" / "w1.json"
+            with contextlib.redirect_stdout(io.StringIO()):
+                rc = waves.main(["--export-wave", "1", "--workspace", str(ws), "--out", str(out_json)])
+            self.assertEqual(rc, 0)
+            raw = out_json.read_bytes()
+            self.assertFalse(raw.startswith(b"\xef\xbb\xbf"))
+            self.assertNotIn(b"\r\n", raw)
+            self.assertEqual([p for p in out_json.parent.iterdir() if p.name.endswith(".tmp")], [])
+            plan = json.loads(raw.decode("utf-8"))
+            self.assertEqual(plan["wave_name"], "M4 Alpha — Core | M4 Beta — CLI")
+            self.assertEqual([t["spec_id"] for t in plan["tasks"]], ["SPEC-MULTI-01"] * 3)
+
+            real_target = root / "real.json"
+            real_target.write_text('{"keep": true}\n', encoding="utf-8")
+            sym_out = root / "sym-out.json"
+            sym_out.symlink_to(real_target)
+            err_buf = io.StringIO()
+            with contextlib.redirect_stderr(err_buf):
+                rc_sym = waves.main(["--export-wave", "1", "--workspace", str(ws), "--out", str(sym_out)])
+            self.assertEqual(rc_sym, 1)
+            self.assertIn("symlink", err_buf.getvalue().lower())
+            self.assertEqual(real_target.read_text(encoding="utf-8"), '{"keep": true}\n')
 
 
 if __name__ == "__main__":

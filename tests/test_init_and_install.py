@@ -51,6 +51,18 @@ def _make_git_repo(repo: Path, branch: str = "main", dev_branch: bool = False) -
 
 
 class TestInitAndInstall(unittest.TestCase):
+    def setUp(self) -> None:
+        self._reg_tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._reg_tmp.cleanup)
+        self._arch_home = Path(self._reg_tmp.name) / "architect-home"
+        env_patch = mock.patch.dict(
+            os.environ,
+            {"GRAVITY_ARCHITECT_HOME": str(self._arch_home)},
+        )
+        env_patch.start()
+        self.addCleanup(env_patch.stop)
+        os.environ.pop("GRAVITY_ARCHITECT_SKIP_REGISTRY", None)
+
     def test_init_workspace_generic_and_idempotence(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             ws = Path(tmp) / "atelier"
@@ -63,8 +75,16 @@ class TestInitAndInstall(unittest.TestCase):
             self.assertIn("AGENTS.md", res["created"])
             self.assertIn("ECOSYSTEM.md", res["created"])
             self.assertIn("projects.json", res["created"])
+            self.assertIn("tasks/_TEMPLATE.md", res["created"])
+            self.assertIn("tasks/archive/.gitkeep", res["created"])
+            self.assertFalse((ws / "handoffs").exists())
+            self.assertFalse((ws / "archives").exists())
             self.assertIn("tracking/projects/web.md", res["created"])
             self.assertIn("tracking/projects/api.md", res["created"])
+            card_txt = (ws / "tracking" / "projects" / "web.md").read_text(encoding="utf-8")
+            self.assertIn("Installé local", card_txt)
+            self.assertIn("<!-- AUTO:START:project-tasks:web -->", card_txt)
+            self.assertIn("<!-- AUTO:END:project-tasks:web -->", card_txt)
 
             cfg = json.loads((ws / "projects.json").read_text(encoding="utf-8"))
             self.assertEqual(cfg["schema_version"], 5)
@@ -906,10 +926,208 @@ class TestInitAndInstall(unittest.TestCase):
                 self.assertIn("(in-place)", out_buf.getvalue())
                 self.assertTrue(install.is_gravity_architect_plugin_dir(global_target))
 
-                # 6. Uninstall cleanly
+                # 6. Uninstall cleanly (does not rewrite sources.json)
+                before_uninstall = sources_path.read_text(encoding="utf-8")
                 self.assertEqual(install.main(["--uninstall"]), 0)
                 self.assertFalse(global_target.exists())
-                self.assertEqual(sources_path.read_text(encoding="utf-8"), before_fail)
+                self.assertEqual(sources_path.read_text(encoding="utf-8"), before_uninstall)
+
+    def test_registry_on_init_add_discover_and_skip_env(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            reg_path = self._arch_home / "ateliers.json"
+            repo = root / "app-one"
+            _make_git_repo(repo, branch="main")
+
+            with contextlib.redirect_stdout(io.StringIO()):
+                rc_disc = init_workspace.main(
+                    ["--workspace", str(root), "--discover", "--scan-dir", str(root), "--json"]
+                )
+            self.assertEqual(rc_disc, 0)
+            self.assertFalse(reg_path.exists())
+
+            ws_skip = root / "ws-skip"
+            with mock.patch.dict(os.environ, {"GRAVITY_ARCHITECT_SKIP_REGISTRY": "1"}):
+                init_workspace.init_workspace(ws_skip, name="Atelier Ignoré")
+            self.assertFalse(reg_path.exists())
+
+            ws = root / "ws-real"
+            init_workspace.init_workspace(ws, name="Atelier Réel")
+            self.assertTrue(reg_path.is_file())
+            data1 = json.loads(reg_path.read_text(encoding="utf-8"))
+            self.assertEqual(data1["schema_version"], 1)
+            self.assertEqual(len(data1["ateliers"]), 1)
+            self.assertEqual(data1["ateliers"][0]["workspace_path"], str(ws.resolve()))
+            self.assertEqual(data1["ateliers"][0]["workspace_name"], "Atelier Réel")
+
+            init_workspace.add_projects_to_workspace(ws, [str(repo)])
+            data2 = json.loads(reg_path.read_text(encoding="utf-8"))
+            self.assertEqual(len(data2["ateliers"]), 1)
+            self.assertEqual(data2["ateliers"][0]["workspace_path"], str(ws.resolve()))
+            self.assertEqual(data2["ateliers"][0]["workspace_name"], "Atelier Réel")
+
+    def test_init_workspace_idempotent_preserves_workspace_name_in_registry(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            ws = Path(tmp) / "atelier-demo"
+            reg_path = self._arch_home / "ateliers.json"
+
+            with contextlib.redirect_stdout(io.StringIO()):
+                rc_init = init_workspace.main(["--workspace", str(ws), "--name", "Atelier Perso"])
+            self.assertEqual(rc_init, 0)
+            data1 = json.loads(reg_path.read_text(encoding="utf-8"))
+            self.assertEqual(data1["ateliers"][0]["workspace_name"], "Atelier Perso")
+
+            res_idemp = init_workspace.init_workspace(ws)
+            self.assertIn("projects.json", res_idemp["skipped"])
+            data2 = json.loads(reg_path.read_text(encoding="utf-8"))
+            self.assertEqual(data2["ateliers"][0]["workspace_name"], "Atelier Perso")
+
+            with contextlib.redirect_stdout(io.StringIO()):
+                rc_cli_idemp = init_workspace.main(["--workspace", str(ws)])
+            self.assertEqual(rc_cli_idemp, 0)
+            data3 = json.loads(reg_path.read_text(encoding="utf-8"))
+            self.assertEqual(data3["ateliers"][0]["workspace_name"], "Atelier Perso")
+
+            init_workspace.init_workspace(ws, force=True)
+            data4 = json.loads(reg_path.read_text(encoding="utf-8"))
+            self.assertEqual(data4["ateliers"][0]["workspace_name"], "Atelier Demo")
+
+    def test_empty_workspace_onboarding_name_derivation_template_and_skill(self) -> None:
+        self.assertEqual(
+            init_workspace._derive_default_workspace_name(Path("/any/atelier-demo")),
+            "Atelier Demo",
+        )
+        self.assertEqual(
+            init_workspace._derive_default_workspace_name(Path("/any/acme_studio")),
+            "Acme Studio",
+        )
+        self.assertEqual(
+            init_workspace._derive_default_workspace_name(Path("/any/---")),
+            init_workspace.DEFAULT_WORKSPACE_NAME,
+        )
+        for generic in ("", ".", "/", "tmp", "temp", "workspace", "projects", "repos", "github", "TMP"):
+            self.assertEqual(
+                init_workspace._derive_default_workspace_name(
+                    Path(f"/any/{generic}") if generic not in ("", ".", "/") else Path(generic or ".")
+                ),
+                init_workspace.DEFAULT_WORKSPACE_NAME,
+            )
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            ws_named = root / "mon-atelier-ia"
+            with contextlib.redirect_stdout(io.StringIO()):
+                rc = init_workspace.main(["--workspace", str(ws_named), "--run-sync", "--offline"])
+            self.assertEqual(rc, 0)
+            cfg_named = json.loads((ws_named / "projects.json").read_text(encoding="utf-8"))
+            self.assertEqual(cfg_named["workspace_name"], "Mon Atelier Ia")
+            self.assertEqual(cfg_named["projects"], [])
+            self.assertIn("# Tableau de bord — Mon Atelier Ia", (ws_named / "ECOSYSTEM.md").read_text(encoding="utf-8"))
+            self.assertTrue((ws_named / "tracking" / "snapshots" / "delta.md").is_file())
+
+            ws_generic = root / "workspace"
+            init_workspace.init_workspace(ws_generic)
+            cfg_generic = json.loads((ws_generic / "projects.json").read_text(encoding="utf-8"))
+            self.assertEqual(cfg_generic["workspace_name"], init_workspace.DEFAULT_WORKSPACE_NAME)
+
+            ws_explicit = root / "autre-dossier"
+            init_workspace.init_workspace(ws_explicit, name="Nom Explicite")
+            cfg_explicit = json.loads((ws_explicit / "projects.json").read_text(encoding="utf-8"))
+            self.assertEqual(cfg_explicit["workspace_name"], "Nom Explicite")
+
+        eco_tpl_raw = (PLUGIN_ROOT / "templates" / "ECOSYSTEM.md").read_bytes()
+        self.assertFalse(eco_tpl_raw.startswith(b"\xef\xbb\xbf"))
+        self.assertNotIn(b"\r\n", eco_tpl_raw)
+        eco_tpl_txt = eco_tpl_raw.decode("utf-8")
+        for block in (
+            "ecosystem-meta",
+            "ecosystem-projects",
+            "ecosystem-watches",
+            "ecosystem-artifacts",
+            "ecosystem-hygiene",
+        ):
+            self.assertIn(f"<!-- AUTO:START:{block} -->", eco_tpl_txt)
+            self.assertIn(f"<!-- AUTO:END:{block} -->", eco_tpl_txt)
+        self.assertIn("/gravity-architect add <chemin>", eco_tpl_txt)
+        self.assertIn("/gravity-architect spec <slug>", eco_tpl_txt)
+        self.assertNotIn("archives/README.md", eco_tpl_txt)
+        self.assertNotIn("handoffs/", eco_tpl_txt)
+
+        skill_txt = (PLUGIN_ROOT / "skills" / "gravity-architect" / "SKILL.md").read_text(encoding="utf-8")
+        ref_txt = (PLUGIN_ROOT / "skills" / "gravity-architect" / "references" / "workflows-and-hygiene.md").read_text(encoding="utf-8")
+        for text in (skill_txt, ref_txt):
+            self.assertIn("--run-sync", text)
+            self.assertIn("projects.json", text)
+        self.assertIn("Empty Workspace Onboarding", ref_txt)
+
+    def test_architect_posture_ro_code_vs_human_approved_closure_and_deploy(self) -> None:
+        rules_raw = (PLUGIN_ROOT / "rules" / "AGENTS.md").read_bytes()
+        tpl_raw = (PLUGIN_ROOT / "templates" / "AGENTS.md").read_bytes()
+        skill_raw = (PLUGIN_ROOT / "skills" / "gravity-architect" / "SKILL.md").read_bytes()
+
+        for label, raw, limit in (
+            ("rules/AGENTS.md", rules_raw, 513),
+            ("templates/AGENTS.md", tpl_raw, 2500),
+            ("SKILL.md", skill_raw, 6000),
+        ):
+            self.assertFalse(raw.startswith(b"\xef\xbb\xbf"), f"BOM dans {label}")
+            self.assertNotIn(b"\r\n", raw, f"CRLF dans {label}")
+            self.assertLessEqual(len(raw), limit, f"{label} dépasse {limit} o ({len(raw)})")
+
+        tpl_txt = tpl_raw.decode("utf-8")
+        self.assertIn("chef d'orchestre", tpl_txt)
+        self.assertIn("Code en lecture seule hors de cet atelier", tpl_txt)
+        self.assertIn("Clôture automatique sur `dev`", tpl_txt)
+        self.assertIn("git push origin dev", tpl_txt)
+        self.assertIn("jamais `--force`", tpl_txt)
+        self.assertIn("install.py", tpl_txt)
+        self.assertIn("ecosystem_install.py", tpl_txt)
+        self.assertIn("Release `main` & tags (accord humain explicite obligatoire)", tpl_txt)
+        self.assertIn("interdiction absolue de `merge dev -> main`", tpl_txt)
+        self.assertIn("Aucun `commit` ni `git push` automatique sur un simple `sync`", tpl_txt)
+        self.assertIn("wave_plan_v1", tpl_txt)
+        self.assertNotIn("wave_runner.py", tpl_txt)
+        self.assertIn("/swarm", tpl_txt)
+        self.assertIn("250k", tpl_txt)
+        self.assertNotIn("bridge", tpl_txt.lower())
+        self.assertNotIn("handoffs/", tpl_txt)
+
+        skill_txt = skill_raw.decode("utf-8")
+        self.assertIn("Strict read-only outside the workshop", skill_txt)
+        self.assertIn("git push origin dev", skill_txt)
+        self.assertIn("merge dev -> main", skill_txt)
+        self.assertIn("explicit human approval", skill_txt)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            ws = Path(tmp) / "atelier-posture"
+            res = init_workspace.init_workspace(ws, name="Atelier Posture")
+            self.assertIn("AGENTS.md", res["created"])
+            deployed_raw = (ws / "AGENTS.md").read_bytes()
+            self.assertLessEqual(len(deployed_raw), 2500)
+            self.assertEqual(deployed_raw, tpl_raw)
+
+    def test_add_projects_and_init_workspace_lock_contention_and_no_workspace_locks(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            ws = root / "atelier"
+            repo1 = root / "repo-one"
+            repo2 = root / "repo-two"
+            _make_git_repo(repo1, branch="main")
+            _make_git_repo(repo2, branch="main")
+
+            init_workspace.init_workspace(ws, name="Locked Atelier", projects=[("repo-one", "../repo-one")])
+            self.assertEqual(list(ws.rglob("*.lock")), [])
+            self.assertTrue((self._arch_home / "locks").is_dir())
+
+            before_cfg = (ws / "projects.json").read_text(encoding="utf-8")
+            lock_file = init_workspace.workspace_lock_path(ws)
+            with init_workspace.exclusive_file_lock(lock_file, timeout_s=1.0):
+                with self.assertRaises(TimeoutError):
+                    init_workspace.add_projects_to_workspace(ws, [str(repo2)], timeout_s=0.05)
+
+            self.assertEqual((ws / "projects.json").read_text(encoding="utf-8"), before_cfg)
+            self.assertFalse((ws / "tracking" / "projects" / "repo-two.md").exists())
+            self.assertEqual(list(ws.rglob("*.lock")), [])
 
 
 if __name__ == "__main__":

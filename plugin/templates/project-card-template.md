@@ -3,7 +3,7 @@
 <!-- AUTO:START:project-meta:<id> -->
 - **Dépôt :** `<chemin>`
 - **Rôle :** <rôle court>
-- **Release (`main`) :** `<vX.Y.Z>` (`<hash>`) — [`<id>-CHANGELOG.md`](../../archives/changelogs/<id>-CHANGELOG.md)
+- **Release (`main`) :** `<vX.Y.Z>` (`<hash>`) — `CHANGELOG.md`
 - **Branche `dev` :** `<hash>` (`+N` vs `main`), manifeste `<ver>`
 - **Installé local :** `<ver>` *(aligné)*
 - **WIP en cours :** Propre
@@ -16,7 +16,7 @@
 - *(5 à 8 puces max décrivant l'architecture présente aujourd'hui ; ne jamais accumuler l'historique des anciennes versions ici.)*
 
 ## 2. Dernière release (`<vX.Y.Z>`)
-- *(3 à 5 lignes résumant uniquement la dernière release ; historique complet dans [`<id>-CHANGELOG.md`](../../archives/changelogs/<id>-CHANGELOG.md).)*
+- *(3 à 5 lignes résumant uniquement la dernière release ; historique complet dans `CHANGELOG.md` du dépôt.)*
 
 ## 3. Invariants (source unique)
 - **Branche & Git :** *(`dev` pour les évolutions, release `main` et tag sur accord humain.)*

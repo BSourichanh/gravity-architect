@@ -7,7 +7,9 @@ import contextlib
 from datetime import datetime, timedelta, timezone
 import io
 import json
+import os
 from pathlib import Path
+import re
 import shutil
 import subprocess
 import sys
@@ -15,11 +17,12 @@ import tempfile
 import unittest
 from unittest import mock
 
-PLUGIN_SCRIPTS = (
-    Path(__file__).resolve().parent.parent / "plugin" / "scripts"
-)
+PLUGIN_ROOT = Path(__file__).resolve().parent.parent / "plugin"
+PLUGIN_SCRIPTS = PLUGIN_ROOT / "scripts"
+sys.path.insert(0, str(PLUGIN_ROOT))
 sys.path.insert(0, str(PLUGIN_SCRIPTS))
 
+from core import renderers  # noqa: E402
 import sync_tracking  # noqa: E402
 
 
@@ -147,6 +150,18 @@ def _init_demo_repo(repo: Path, compliant: bool = False) -> None:
 
 
 class TestSyncTracking(unittest.TestCase):
+    def setUp(self) -> None:
+        self._reg_tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._reg_tmp.cleanup)
+        self._arch_home = Path(self._reg_tmp.name) / "architect-home"
+        env_patch = mock.patch.dict(
+            os.environ,
+            {"GRAVITY_ARCHITECT_HOME": str(self._arch_home)},
+        )
+        env_patch.start()
+        self.addCleanup(env_patch.stop)
+        os.environ.pop("GRAVITY_ARCHITECT_SKIP_REGISTRY", None)
+
     def test_resolve_workspace_root_direct_subfolder_env_and_ambiguity(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -375,7 +390,6 @@ class TestSyncTracking(unittest.TestCase):
             (repo / ".agents").mkdir()
             (repo / ".agents" / "state.json").write_text("{}\n", encoding="utf-8")
 
-            changelogs_dir = tmp_path / "archives" / "changelogs"
             cfg = {
                 "id": "demo",
                 "name": "Demo",
@@ -390,7 +404,6 @@ class TestSyncTracking(unittest.TestCase):
             snap = sync_tracking.collect_project_snapshot(
                 cfg,
                 base_dir=tmp_path,
-                changelogs_dir=changelogs_dir,
                 installed_plugins_map={"demo": {"name": "demo", "version": "0.1.0"}},
                 concept_root=tmp_path,
             )
@@ -402,12 +415,14 @@ class TestSyncTracking(unittest.TestCase):
             self.assertEqual(snap["stable"]["latest_tag"], "v0.1.0")
             self.assertEqual(snap["stable"]["branches"]["dev_ahead_of_main"], 1)
             self.assertEqual(snap["wip"]["code_wip_count"], 1)
+            self.assertEqual(snap["stable"]["changelog_path"], "CHANGELOG.md")
+            self.assertIsNone(snap["stable"]["changelog_archive"])
+            self.assertFalse((tmp_path / "archives").exists())
 
             (repo / "tracked.txt").unlink()
             snap_rt = sync_tracking.collect_project_snapshot(
                 cfg,
                 base_dir=tmp_path,
-                changelogs_dir=changelogs_dir,
                 concept_root=tmp_path,
             )
             self.assertEqual(snap_rt["wip"]["code_wip_count"], 0)
@@ -416,7 +431,6 @@ class TestSyncTracking(unittest.TestCase):
             missing = sync_tracking.collect_project_snapshot(
                 {"id": "absent", "path": "./does-not-exist"},
                 base_dir=tmp_path,
-                changelogs_dir=changelogs_dir,
                 concept_root=tmp_path,
             )
             self.assertFalse(missing["exists"])
@@ -459,7 +473,7 @@ class TestSyncTracking(unittest.TestCase):
                 "default_dev_branch": "dev",
             }
             snap_merged = sync_tracking.collect_project_snapshot(
-                cfg, base_dir=root, changelogs_dir=root / "archives" / "changelogs", concept_root=root
+                cfg, base_dir=root, concept_root=root
             )
             self.assertTrue(snap_merged["stable"]["branches"]["latest_tag_on_main"])
             self.assertEqual(snap_merged["stable"]["branches"]["commits_since_latest_tag"], 0)
@@ -469,7 +483,7 @@ class TestSyncTracking(unittest.TestCase):
             _git(repo, "add", "-A")
             _git(repo, "commit", "-m", "feat: post-tag work")
             snap_after = sync_tracking.collect_project_snapshot(
-                cfg, base_dir=root, changelogs_dir=root / "archives" / "changelogs", concept_root=root
+                cfg, base_dir=root, concept_root=root
             )
             self.assertEqual(snap_after["stable"]["branches"]["commits_since_latest_tag"], 1)
 
@@ -513,7 +527,6 @@ class TestSyncTracking(unittest.TestCase):
             snap = sync_tracking.collect_project_snapshot(
                 cfg,
                 base_dir=root,
-                changelogs_dir=root / "archives" / "changelogs",
                 installed_plugins_map=installed_map,
                 concept_root=root,
                 default_preset="antigravity-plugin",
@@ -525,7 +538,6 @@ class TestSyncTracking(unittest.TestCase):
             snap2 = sync_tracking.collect_project_snapshot(
                 cfg,
                 base_dir=root,
-                changelogs_dir=root / "archives" / "changelogs",
                 installed_plugins_map=installed_map,
                 concept_root=root,
                 default_preset="antigravity-plugin",
@@ -552,33 +564,102 @@ class TestSyncTracking(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             (root / "specs" / "archive").mkdir(parents=True)
-            (root / "handoffs" / "archive").mkdir(parents=True)
+            (root / "tasks" / "archive").mkdir(parents=True)
             (root / "specs" / "_TEMPLATE.md").write_text("# Template\n", encoding="utf-8")
-            (root / "handoffs" / "_TEMPLATE.md").write_text("# Template\n", encoding="utf-8")
+            (root / "tasks" / "_TEMPLATE.md").write_text("# Template\n", encoding="utf-8")
             (root / "specs" / "2026-11-22-demo.md").write_text(
                 "# Spec Demo\n- **Statut :** `validated`\n- **Projets impactés :** `alpha`\n",
                 encoding="utf-8",
             )
-            (root / "handoffs" / "2026-11-22-alpha-demo.md").write_text(
-                "# Handoff Demo\n- **Dépôt cible :** `alpha`\n- **Date / Statut :** `2026-11-22` — `ready`\n",
+            (root / "tasks" / "2026-11-22-alpha-demo.md").write_text(
+                "# Task Demo\n"
+                "- **Vague :** `2`\n"
+                "- **Dépôt cible :** `alpha` (`../alpha`)\n"
+                "- **Branche attendue :** `feat/demo-branch`\n"
+                "- **Dépendances :** `2026-11-21-alpha-base`, [`2026-11-21-beta-init.md`](2026-11-21-beta-init.md) *(requis)*\n"
+                "- **Profil workflow :** `deep`\n"
+                "- **Date / Statut :** `2026-11-22` — `ready`\n"
+                "- **Fichiers cibles :** `src/inline.py::run (~L10-L20)`\n"
+                "- **Ancres :** `src/inline.py::helper (~L30)`\n\n"
+                "## Ancres exactes\n"
+                "- `src/main.py`\n"
+                "  - `main (~L1-L15)`\n"
+                "  - `::boot (~L20)`\n"
+                "- `tests/test_main.py` — *couverture*\n",
+                encoding="utf-8",
+            )
+            (root / "tasks" / "2026-11-22-alpha-badwave.md").write_text(
+                "# Bad Wave\n- **Vague :** `vague-x`\n- **Dépôt cible :** `alpha`\n",
                 encoding="utf-8",
             )
             arts = sync_tracking.collect_concept_artifacts(root)
             self.assertEqual(len(arts["specs"]), 1)
-            self.assertEqual(len(arts["pending_handoffs"]), 1)
+            self.assertEqual(len(arts["pending_tasks"]), 2)
+            self.assertEqual(arts["pending_handoffs"], [])
 
-            blk = sync_tracking._format_project_handoffs_block(
+            task = arts["pending_tasks"][1]
+            self.assertEqual(task["id"], "2026-11-22-alpha-demo")
+            self.assertEqual(task["wave"], 2)
+            self.assertNotIn("wave_raw", task)
+            self.assertEqual(task["dependencies"], ["2026-11-21-alpha-base", "2026-11-21-beta-init"])
+            self.assertEqual(task["workflow_profile"], "deep")
+            self.assertEqual(task["target_project"], "alpha")
+            self.assertEqual(task["expected_branch"], "feat/demo-branch")
+            self.assertEqual(task["target_files"], ["src/inline.py", "src/main.py", "tests/test_main.py"])
+            self.assertEqual(task["anchors"]["src/inline.py"], ["src/inline.py::run (~L10-L20)", "src/inline.py::helper (~L30)"])
+            self.assertEqual(task["anchors"]["src/main.py"], ["src/main.py::main (~L1-L15)", "src/main.py::boot (~L20)"])
+
+            bad_task = arts["pending_tasks"][0]
+            self.assertIsNone(bad_task["wave"])
+            self.assertEqual(bad_task["wave_raw"], "vague-x")
+            self.assertEqual(bad_task["expected_branch"], "")
+
+            blk = sync_tracking._format_project_tasks_block(
                 "alpha",
                 {
-                    "pending_handoffs": [
-                        {"filename": "2026-11-22-alpha-beta-x.md", "rel_path": "h1.md", "title": "AB", "status": "ready", "target_project": "alpha-beta"},
-                        {"filename": "2026-11-22-alpha-x.md", "rel_path": "h2.md", "title": "A", "status": "ready", "target_project": "alpha"},
+                    "pending_tasks": [
+                        {"filename": "2026-11-22-alpha-beta-x.md", "rel_path": "t1.md", "title": "AB", "status": "ready", "target_project": "alpha-beta"},
+                        {"filename": "2026-11-22-alpha-x.md", "rel_path": "t2.md", "title": "A", "status": "ready", "target_project": "alpha"},
                     ],
-                    "archived_handoffs": [],
+                    "archived_tasks": [],
                 },
             )
             self.assertIn("2026-11-22-alpha-x.md", blk)
             self.assertNotIn("2026-11-22-alpha-beta-x.md", blk)
+
+    def test_render_delta_markdown_includes_active_specs_and_tasks_by_wave(self) -> None:
+        base_delta = {
+            "synced_at": "2026-11-24T19:00:00+01:00",
+            "needs_editorial_update": False,
+            "fetch_status": "none",
+            "auto_updated_files": [],
+            "editorial_targets": [],
+            "hygiene_alerts": [],
+            "projects": {},
+            "watches": {},
+            "artifacts": {
+                "specs": [{"filename": "2026-11-24-spec.md", "status": "validated", "target_project": "core", "title": "Spec Core"}],
+                "pending_tasks": [
+                    {"filename": "2026-11-24-t2.md", "wave": 2, "status": "ready", "target_project": "cli", "title": "Lot 2"},
+                    {"filename": "2026-11-24-t0.md", "wave": None, "status": "draft", "target_project": "docs", "title": "Lot 0"},
+                    {"filename": "2026-11-24-t1.md", "wave": 1, "status": "ready", "target_project": "core", "title": "Lot 1"},
+                ],
+            },
+        }
+        md = sync_tracking.render_delta_markdown(base_delta)
+        self.assertIn("## Artefacts actifs", md)
+        self.assertIn("2026-11-24-spec.md", md)
+        self.assertIn("Vague 1", md)
+        self.assertIn("Vague 2", md)
+        self.assertIn("Sans vague", md)
+        self.assertLess(md.index("Vague 1"), md.index("Vague 2"))
+        self.assertLess(md.index("Vague 2"), md.index("Sans vague"))
+
+        override_md = sync_tracking.render_delta_markdown(
+            base_delta,
+            artifacts={"specs": [], "pending_tasks": []},
+        )
+        self.assertNotIn("## Artefacts actifs", override_md)
 
     def test_delta_auto_blocks_idempotence_editorial_state_and_watches(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -590,7 +671,7 @@ class TestSyncTracking(unittest.TestCase):
             (root / "tracking" / "projects").mkdir(parents=True)
             (root / "tracking" / "antigravity").mkdir(parents=True)
             (root / "specs" / "archive").mkdir(parents=True)
-            (root / "handoffs" / "archive").mkdir(parents=True)
+            (root / "tasks" / "archive").mkdir(parents=True)
             (root / "AGENTS.md").write_text("# Architect\n", encoding="utf-8")
 
             (root / "ECOSYSTEM.md").write_text(
@@ -605,7 +686,7 @@ class TestSyncTracking(unittest.TestCase):
             (root / "tracking" / "projects" / "demo.md").write_text(
                 "# Demo\n<!-- AUTO:START:project-meta:demo -->\nold\n<!-- AUTO:END:project-meta:demo -->\n"
                 "Prose projet intacte.\n"
-                "<!-- AUTO:START:project-handoffs:demo -->\nold\n<!-- AUTO:END:project-handoffs:demo -->\n",
+                "<!-- AUTO:START:project-tasks:demo -->\nold\n<!-- AUTO:END:project-tasks:demo -->\n",
                 encoding="utf-8",
             )
             (root / "tracking" / "antigravity" / "IMPACT.md").write_text(
@@ -739,7 +820,7 @@ class TestSyncTracking(unittest.TestCase):
             )
             (root / "tracking" / "projects" / "demo.md").write_text(
                 "# Demo\n<!-- AUTO:START:project-meta:demo -->\n<!-- AUTO:END:project-meta:demo -->\n"
-                "<!-- AUTO:START:project-handoffs:demo -->\n<!-- AUTO:END:project-handoffs:demo -->\n",
+                "<!-- AUTO:START:project-tasks:demo -->\n<!-- AUTO:END:project-tasks:demo -->\n",
                 encoding="utf-8",
             )
             cfg_path = root / "projects.json"
@@ -1094,13 +1175,13 @@ class TestSyncTracking(unittest.TestCase):
                 for p in watched:
                     self.assertEqual(p.stat().st_mtime_ns, mtimes[p], str(p))
 
-    def test_archived_handoffs_compact_summary_and_project_cap(self) -> None:
+    def test_archived_tasks_compact_summary_and_project_cap(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             ws = Path(tmp)
             archived_many = [
                 {
                     "filename": f"2026-11-{i:02d}-alpha-lot-{i:02d}.md",
-                    "rel_path": f"handoffs/archive/2026-11-{i:02d}-alpha-lot-{i:02d}.md",
+                    "rel_path": f"tasks/archive/2026-11-{i:02d}-alpha-lot-{i:02d}.md",
                     "title": f"Lot {i}",
                     "status": "done",
                     "target_project": "alpha",
@@ -1115,20 +1196,20 @@ class TestSyncTracking(unittest.TestCase):
                 "artifacts": {
                     "specs": [],
                     "archived_specs": [],
-                    "pending_handoffs": [],
-                    "archived_handoffs": archived_many,
+                    "pending_tasks": [],
+                    "archived_tasks": archived_many,
                 },
             }
             blocks_many = sync_tracking._build_ecosystem_blocks(
                 snap_base, {"hygiene_alerts": []}, ws, public_mode=False
             )
             art_lines = blocks_many["ecosystem-artifacts"].splitlines()
-            archived_lines = [ln for ln in art_lines if "Handoffs archivés" in ln or "handoffs/archive/2026-" in ln]
+            archived_lines = [ln for ln in art_lines if "Tasks archivées" in ln or "tasks/archive/2026-" in ln]
             self.assertEqual(len(archived_lines), 1)
             self.assertEqual(
                 archived_lines[0],
-                "- **Handoffs archivés (`handoffs/archive/`) :** 12 "
-                "*(dernier : [`2026-11-12-alpha-lot-12.md`](handoffs/archive/2026-11-12-alpha-lot-12.md))*",
+                "- **Tasks archivées (`tasks/archive/`) :** 12 "
+                "*(dernière : [`2026-11-12-alpha-lot-12.md`](tasks/archive/2026-11-12-alpha-lot-12.md))*",
             )
 
             snap_empty = {
@@ -1136,37 +1217,37 @@ class TestSyncTracking(unittest.TestCase):
                 "artifacts": {
                     "specs": [],
                     "archived_specs": [],
-                    "pending_handoffs": [],
-                    "archived_handoffs": [],
+                    "pending_tasks": [],
+                    "archived_tasks": [],
                 },
             }
             blocks_empty = sync_tracking._build_ecosystem_blocks(
                 snap_empty, {"hygiene_alerts": []}, ws, public_mode=False
             )
             self.assertIn(
-                "- **Handoffs archivés (`handoffs/archive/`) :** aucun pour le moment.",
+                "- **Tasks archivées (`tasks/archive/`) :** aucune pour le moment.",
                 blocks_empty["ecosystem-artifacts"],
             )
 
-            # _format_project_handoffs_block : <= 3 sans ligne de débordement
-            blk_3 = sync_tracking._format_project_handoffs_block(
+            # _format_project_tasks_block : <= 3 sans ligne de débordement
+            blk_3 = sync_tracking._format_project_tasks_block(
                 "alpha",
-                {"pending_handoffs": [], "archived_handoffs": archived_many[:3]},
+                {"pending_tasks": [], "archived_tasks": archived_many[:3]},
             )
             self.assertIn("2026-11-01-alpha-lot-01.md", blk_3)
             self.assertIn("2026-11-03-alpha-lot-03.md", blk_3)
-            self.assertNotIn("plus anciens", blk_3)
+            self.assertNotIn("plus anciennes", blk_3)
 
-            # _format_project_handoffs_block : > 3 plafonné aux 3 plus récents + compteur
-            blk_5 = sync_tracking._format_project_handoffs_block(
+            # _format_project_tasks_block : > 3 plafonné aux 3 plus récentes + compteur
+            blk_5 = sync_tracking._format_project_tasks_block(
                 "alpha",
-                {"pending_handoffs": [], "archived_handoffs": archived_many[:5]},
+                {"pending_tasks": [], "archived_tasks": archived_many[:5]},
             )
             self.assertNotIn("2026-11-01-alpha-lot-01.md", blk_5)
             self.assertNotIn("2026-11-02-alpha-lot-02.md", blk_5)
             for idx in (3, 4, 5):
                 self.assertIn(f"2026-11-{idx:02d}-alpha-lot-{idx:02d}.md", blk_5)
-            self.assertIn("  - *(+2 plus anciens dans `handoffs/archive/`)*", blk_5)
+            self.assertIn("  - *(+2 plus anciennes dans `tasks/archive/`)*", blk_5)
 
     def test_semver_parse_and_cli_version_comparison(self) -> None:
         self.assertEqual(sync_tracking._parse_semver_tuple("v1.5.12"), (1, 5, 12))
@@ -1200,7 +1281,7 @@ class TestSyncTracking(unittest.TestCase):
                     "synced_at": "2026-11-22T12:00:00+01:00",
                     "environment": {"local_agy_version": local_ver, "installed_plugins": [], "orphan_plugin_dirs": []},
                     "projects": [],
-                    "artifacts": {"specs": [], "archived_specs": [], "pending_handoffs": [], "archived_handoffs": []},
+                    "artifacts": {"specs": [], "archived_specs": [], "pending_tasks": [], "archived_tasks": []},
                     "watches": {
                         "antigravity": {
                             "id": "antigravity",
@@ -1419,6 +1500,264 @@ class TestSyncTracking(unittest.TestCase):
                 max_stdout_bytes=90,
             )
             self.assertLessEqual(len(tiny_out.encode("utf-8")), 90)
+
+    def test_register_atelier_mru_dedup_cap_prune_corrupt_symlinks_and_opt_out(self) -> None:
+        def _make_atelier(parent: Path, slug: str, name: str | None = None) -> Path:
+            ws = parent / slug
+            ws.mkdir(parents=True, exist_ok=True)
+            cfg = {"schema_version": 5, "projects": [], "watches": []}
+            if name is not None:
+                cfg["workspace_name"] = name
+            (ws / "projects.json").write_text(json.dumps(cfg) + "\n", encoding="utf-8")
+            (ws / "ECOSYSTEM.md").write_text("# Eco\n", encoding="utf-8")
+            return ws
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            arch_home = root / "arch-home"
+            reg_path = sync_tracking.resolve_ateliers_registry_path(architect_home=arch_home)
+            self.assertEqual(reg_path, arch_home.resolve() / "ateliers.json")
+
+            ws_a = _make_atelier(root, "ws-a", name="Atelier A")
+            self.assertFalse(
+                sync_tracking.register_atelier(
+                    ws_a, architect_home=arch_home, env={"GRAVITY_ARCHITECT_SKIP_REGISTRY": "1"}
+                )
+            )
+            self.assertFalse(reg_path.exists())
+
+            incomplete = root / "incomplete"
+            incomplete.mkdir()
+            (incomplete / "projects.json").write_text("{}\n", encoding="utf-8")
+            self.assertFalse(sync_tracking.register_atelier(incomplete, architect_home=arch_home, env={}))
+            not_dir = root / "file.txt"
+            not_dir.write_text("x\n", encoding="utf-8")
+            self.assertFalse(sync_tracking.register_atelier(not_dir, architect_home=arch_home, env={}))
+
+            self.assertTrue(sync_tracking.register_atelier(ws_a, architect_home=arch_home, env={}))
+            payload1 = json.loads(reg_path.read_text(encoding="utf-8"))
+            self.assertEqual(payload1["schema_version"], 1)
+            self.assertEqual(len(payload1["ateliers"]), 1)
+            self.assertEqual(payload1["ateliers"][0]["workspace_path"], str(ws_a.resolve()))
+            self.assertEqual(payload1["ateliers"][0]["workspace_name"], "Atelier A")
+            self.assertRegex(payload1["ateliers"][0]["updated_at"], r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$")
+
+            ws_b = _make_atelier(root, "ws-b", name="Atelier B")
+            self.assertTrue(sync_tracking.register_atelier(ws_b, architect_home=arch_home, env={}))
+            self.assertTrue(sync_tracking.register_atelier(ws_a, workspace_name="Atelier A2", architect_home=arch_home, env={}))
+            payload2 = json.loads(reg_path.read_text(encoding="utf-8"))
+            self.assertEqual(
+                [a["workspace_path"] for a in payload2["ateliers"]],
+                [str(ws_a.resolve()), str(ws_b.resolve())],
+            )
+            self.assertEqual(payload2["ateliers"][0]["workspace_name"], "Atelier A2")
+
+            (ws_b / "ECOSYSTEM.md").unlink()
+            ws_c = _make_atelier(root, "ws-c", name="Atelier C")
+            self.assertTrue(sync_tracking.register_atelier(ws_c, architect_home=arch_home, env={}))
+            payload3 = json.loads(reg_path.read_text(encoding="utf-8"))
+            self.assertEqual(
+                [a["workspace_path"] for a in payload3["ateliers"]],
+                [str(ws_c.resolve()), str(ws_a.resolve())],
+            )
+
+            all_ws = [_make_atelier(root, f"cap-{i:02d}", name=f"Cap {i}") for i in range(22)]
+            for w in all_ws:
+                self.assertTrue(sync_tracking.register_atelier(w, architect_home=arch_home, env={}))
+            payload_cap = json.loads(reg_path.read_text(encoding="utf-8"))
+            self.assertEqual(len(payload_cap["ateliers"]), 20)
+            self.assertEqual(payload_cap["ateliers"][0]["workspace_path"], str(all_ws[-1].resolve()))
+            cap_paths = {a["workspace_path"] for a in payload_cap["ateliers"]}
+            self.assertNotIn(str(all_ws[0].resolve()), cap_paths)
+            self.assertNotIn(str(all_ws[1].resolve()), cap_paths)
+
+            reg_path.write_text("{corrupt json", encoding="utf-8")
+            self.assertTrue(sync_tracking.register_atelier(ws_a, architect_home=arch_home, env={}))
+            recovered = json.loads(reg_path.read_text(encoding="utf-8"))
+            self.assertEqual(recovered["schema_version"], 1)
+            self.assertEqual([a["workspace_path"] for a in recovered["ateliers"]], [str(ws_a.resolve())])
+
+            sym_ws = root / "sym-ws"
+            sym_ws.symlink_to(ws_a, target_is_directory=True)
+            self.assertFalse(sync_tracking.register_atelier(sym_ws, architect_home=arch_home, env={}))
+
+            ws_sym_file = root / "ws-sym-file"
+            ws_sym_file.mkdir()
+            (ws_sym_file / "projects.json").write_text("{}\n", encoding="utf-8")
+            (ws_sym_file / "ECOSYSTEM.md").symlink_to(ws_a / "ECOSYSTEM.md")
+            self.assertFalse(sync_tracking.register_atelier(ws_sym_file, architect_home=arch_home, env={}))
+
+            sym_arch = root / "sym-arch"
+            sym_arch.symlink_to(arch_home, target_is_directory=True)
+            self.assertFalse(sync_tracking.register_atelier(ws_a, architect_home=sym_arch, env={}))
+
+            arch_sym_file = root / "arch-sym-file"
+            arch_sym_file.mkdir()
+            (arch_sym_file / "ateliers.json").symlink_to(reg_path)
+            self.assertFalse(sync_tracking.register_atelier(ws_a, architect_home=arch_sym_file, env={}))
+
+            with mock.patch.object(sync_tracking, "write_json_atomic", side_effect=OSError("disk full")):
+                self.assertFalse(sync_tracking.register_atelier(ws_a, architect_home=arch_home, env={}))
+
+            empty_cwd = root / "empty-cwd"
+            empty_cwd.mkdir()
+            with self.assertRaises(FileNotFoundError):
+                sync_tracking.resolve_workspace_root(
+                    cwd=empty_cwd,
+                    env={"GRAVITY_ARCHITECT_HOME": str(arch_home)},
+                    home_dir=root / "isolated-home",
+                )
+
+    def test_run_sync_registers_atelier_only_when_not_dry_run_and_locks_externally(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            ws = root / "atelier"
+            (ws / "tracking" / "projects").mkdir(parents=True)
+            (ws / "AGENTS.md").write_text("# Architect\n", encoding="utf-8")
+            (ws / "ECOSYSTEM.md").write_text(
+                "# Eco\n"
+                "<!-- AUTO:START:ecosystem-meta -->\n<!-- AUTO:END:ecosystem-meta -->\n"
+                "<!-- AUTO:START:ecosystem-projects -->\n<!-- AUTO:END:ecosystem-projects -->\n"
+                "<!-- AUTO:START:ecosystem-watches -->\n<!-- AUTO:END:ecosystem-watches -->\n"
+                "<!-- AUTO:START:ecosystem-artifacts -->\n<!-- AUTO:END:ecosystem-artifacts -->\n"
+                "<!-- AUTO:START:ecosystem-hygiene -->\n<!-- AUTO:END:ecosystem-hygiene -->\n",
+                encoding="utf-8",
+            )
+            cfg_path = ws / "projects.json"
+            cfg_path.write_text(
+                json.dumps(
+                    {
+                        "schema_version": 5,
+                        "workspace_name": "Atelier Sync",
+                        "default_preset": "generic",
+                        "projects": [],
+                        "watches": [],
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            reg_path = self._arch_home / "ateliers.json"
+            sync_tracking.run_sync(config_path=cfg_path, concept_root=ws, offline=True, dry_run=True)
+            self.assertFalse(reg_path.exists())
+            self.assertFalse((self._arch_home / "locks").exists())
+
+            sync_tracking.run_sync(config_path=cfg_path, concept_root=ws, offline=True, dry_run=False)
+            self.assertTrue(reg_path.is_file())
+            self.assertEqual(list(ws.glob("*.lock")), [])
+            self.assertTrue((self._arch_home / "locks").is_dir())
+            data = json.loads(reg_path.read_text(encoding="utf-8"))
+            self.assertEqual(len(data["ateliers"]), 1)
+            self.assertEqual(data["ateliers"][0]["workspace_path"], str(ws.resolve()))
+            self.assertEqual(data["ateliers"][0]["workspace_name"], "Atelier Sync")
+
+            lock_file = sync_tracking.workspace_lock_path(ws)
+            orig_lock = sync_tracking.exclusive_file_lock
+            with orig_lock(lock_file, timeout_s=1.0):
+                with mock.patch.object(
+                    sync_tracking,
+                    "exclusive_file_lock",
+                    side_effect=lambda p, timeout_s=5.0: orig_lock(p, timeout_s=0.05),
+                ):
+                    with self.assertRaises(TimeoutError):
+                        sync_tracking.run_sync(config_path=cfg_path, concept_root=ws, offline=True, dry_run=False)
+                    with contextlib.redirect_stderr(io.StringIO()):
+                        rc_locked = sync_tracking.main(["--config", str(cfg_path), "--concept-root", str(ws), "--offline"])
+                    self.assertEqual(rc_locked, 1)
+
+    def test_int07_collect_atelier_hygiene_alerts_and_run_sync(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            ws = Path(tmp) / "atelier-int07"
+            (ws / "specs").mkdir(parents=True)
+            (ws / "tasks").mkdir(parents=True)
+            (ws / "audits" / "code").mkdir(parents=True)
+            (ws / "tracking" / "projects").mkdir(parents=True)
+            (ws / "tracking" / "antigravity").mkdir(parents=True)
+            (ws / "tracking" / "snapshots").mkdir(parents=True)
+            (ws / "tracking" / "snapshots" / "ecosystem_snapshot.md").write_text("# Snap\n", encoding="utf-8")
+
+            tpl_dir = PLUGIN_ROOT / "templates"
+            spec_lf = (tpl_dir / "spec-template.md").read_text(encoding="utf-8").replace("\r\n", "\n")
+            (ws / "specs" / "_TEMPLATE.md").write_bytes(spec_lf.replace("\n", "\r\n").encode("utf-8"))
+            (ws / "tasks" / "_TEMPLATE.md").write_text("# Modifié\n", encoding="utf-8")
+            (ws / "tracking" / "projects" / "_TEMPLATE.md").write_text(
+                (tpl_dir / "project-card-template.md").read_text(encoding="utf-8"),
+                encoding="utf-8",
+            )
+            (ws / "AGENTS.md").write_text(
+                "# Agents\n"
+                "```markdown\n[ignored](does/not/exist.md)\n```\n"
+                "Inline `[also-ignored](nope.md)` et [valid](ECOSYSTEM.md).\n",
+                encoding="utf-8",
+            )
+            (ws / "ECOSYSTEM.md").write_text(
+                "# Eco\n"
+                "<!-- AUTO:START:ecosystem-meta -->\n<!-- AUTO:END:ecosystem-meta -->\n"
+                "<!-- AUTO:START:ecosystem-projects -->\n<!-- AUTO:END:ecosystem-projects -->\n"
+                "<!-- AUTO:START:ecosystem-watches -->\n<!-- AUTO:END:ecosystem-watches -->\n"
+                "<!-- AUTO:START:ecosystem-artifacts -->\n<!-- AUTO:END:ecosystem-artifacts -->\n"
+                "<!-- AUTO:START:ecosystem-hygiene -->\n<!-- AUTO:END:ecosystem-hygiene -->\n"
+                "- [Cassé](missing/target.md)\n"
+                "- [Interdit](file:///etc/passwd)\n",
+                encoding="utf-8",
+            )
+            (ws / "audits" / "code" / "README.md").write_text(
+                "# Audits\n- [Rapport manquant](2026-01-01-missing.md)\n",
+                encoding="utf-8",
+            )
+
+            alerts = sync_tracking.collect_atelier_hygiene_alerts(ws, templates_dir=tpl_dir)
+            joined = "\n".join(alerts)
+            self.assertNotIn("specs/_TEMPLATE.md", joined)
+            self.assertIn("tasks/_TEMPLATE.md", joined)
+            self.assertNotIn("does/not/exist.md", joined)
+            self.assertNotIn("nope.md", joined)
+            self.assertNotIn("CHANGELOG.md", joined)
+            self.assertIn("missing/target.md", joined)
+            self.assertIn("file:///etc/passwd", joined)
+            self.assertIn("2026-01-01-missing.md", joined)
+
+            (ws / "AGENTS.md").write_text("# Agents\n" + ("x" * 2600), encoding="utf-8")
+            cfg_path = ws / "projects.json"
+            cfg_path.write_text(
+                json.dumps({"schema_version": 5, "workspace_name": "INT07", "projects": [], "watches": []}),
+                encoding="utf-8",
+            )
+            _, delta = sync_tracking.run_sync(config_path=cfg_path, concept_root=ws, offline=True)
+            d_joined = "\n".join(delta["hygiene_alerts"])
+            self.assertIn("AGENTS.md", d_joined)
+            self.assertIn("tasks/_TEMPLATE.md", d_joined)
+            self.assertIn("missing/target.md", d_joined)
+            self.assertFalse((ws / "archives").exists())
+
+    def test_project_card_direct_changelog_links_and_public_mode(self) -> None:
+        base_proj = {
+            "id": "demo",
+            "name": "Demo",
+            "path": "../demo",
+            "role": "Test",
+            "preset": "generic",
+            "default_dev_branch": "dev",
+            "exists": True,
+            "stable": {
+                "has_changelog": True,
+                "changelog_path": "CHANGELOG.md",
+                "version": "0.1.0",
+                "branches": {"dev_branch": "dev", "main_branch": "main", "main_latest_tag": "v0.1.0", "main_head": "abc", "dev_head": "abc"},
+            },
+            "wip": {"code_wip_count": 0, "runtime_only_wip": False},
+        }
+        body_rel = renderers._build_project_card_meta_body(base_proj, "2026-11-26", effective_public=False)
+        self.assertIn("[`CHANGELOG.md`](../../../demo/CHANGELOG.md)", body_rel)
+
+        body_pub = renderers._build_project_card_meta_body(base_proj, "2026-11-26", effective_public=True)
+        self.assertIn("— `CHANGELOG.md`", body_pub)
+        self.assertNotIn("../../../demo/CHANGELOG.md", body_pub)
+
+        abs_proj = {**base_proj, "path": "/abs/path/demo"}
+        body_abs = renderers._build_project_card_meta_body(abs_proj, "2026-11-26", effective_public=False)
+        self.assertIn("— `CHANGELOG.md`", body_abs)
+        self.assertNotIn("/abs/path/demo", body_abs)
 
 
 if __name__ == "__main__":

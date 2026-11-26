@@ -8,6 +8,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **[TASK-ARCH-03a] Direct `CHANGELOG.md` links, `wave_name`/`spec_id` export, `tasks/` alignment & `_shared` atomic/lock I/O (`SPEC-ARCH-01`):**
+  - Updated `plugin/core/waves.py` (`export_wave`) to emit `spec_id` on each task, aggregate distinct ordered `wave_name` values at the top level (`" | ".join(...)`), resolve self-workspace `atelier_id` / directory name, guard symlink/junction `--out` paths, and write `--out` atomically via `_shared.atomic_io.write_json_atomic`.
+  - Ported `archive/pre-refonte-wip` (`ed9e78e`) direct `CHANGELOG.md` tracking to `plugin/core/git_collector.py` (`changelog_path`, optional `changelogs_dir`, zero `archives/changelogs/` copies) and `plugin/core/renderers.py` (`_render_active_artifacts_lines`, `format_project_tasks_block`, `_format_project_changelog_link`, `_shared.atomic_io.write_text_atomic` in `apply_auto_doc_updates`).
+  - Reconciled `dev` and `wip` (`ed9e78e`) in `plugin/scripts/init_workspace.py` (`<= 450` L) and `plugin/scripts/sync_tracking.py` (`<= 250` L): `tasks/` deployment, `_derive_default_workspace_name`, `collect_atelier_hygiene_alerts`, `register_atelier` (`ateliers.json` MRU), and fail-closed `_shared.file_lock.exclusive_file_lock` + `_shared.atomic_io` with lock files isolated under `<architect_home>` (`ateliers.lock`, `locks/<sha256>.lock`).
+  - Removed obsolete `plugin/templates/archives-readme.md` and `plugin/templates/handoff-template.md`; updated `plugin/templates/{AGENTS,ECOSYSTEM,project-card-template}.md` and unit suites (`tests/test_{core_structure,waves,sync_tracking,init_and_install}.py`) with zero legacy studio/bridge references.
 - **[TASK-ARCH-02] `_shared` projection, slim `install.py`/`validate.py`, `PreInvocation` hook & EN docs (`SPEC-ARCH-01`):**
   - Projected `plugin/_shared/` and `plugin/.shared_manifest.json` from `gravity/shared/gravity_shared/` via `sync_shared.py --apply --repos gravity-architect`.
   - Replaced `install.py` (`562` L -> `78` L) with a thin launcher delegating to `_shared.installer_core` (`InstallSpec` + `run_installer`), keeping all 11 CLI flags, symlink/junction safety, `is_lock_oserror` in-place upgrade fallback, Windows `python3` rewrite, `agy --strict`, and atomic locked `sources.json` provenance.
