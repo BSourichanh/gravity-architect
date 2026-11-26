@@ -18,8 +18,10 @@ from unittest import mock
 REPO_ROOT = Path(__file__).resolve().parent.parent
 PLUGIN_ROOT = REPO_ROOT / "plugin"
 sys.path.insert(0, str(REPO_ROOT))
+sys.path.insert(0, str(PLUGIN_ROOT))
 sys.path.insert(0, str(PLUGIN_ROOT / "scripts"))
 
+from _shared import installer_core, validator_core  # noqa: E402
 import init_workspace  # noqa: E402
 import install  # noqa: E402
 import validate  # noqa: E402
@@ -114,7 +116,7 @@ class TestInitAndInstall(unittest.TestCase):
             bad_rep = validate.Report()
             validate.validate_plugin(bad_plug, bad_rep)
             self.assertFalse(bad_rep.ok(strict=True))
-            self.assertTrue(any("Fuite spécifique" in e for e in bad_rep.errors), bad_rep.errors)
+            self.assertTrue(any("Chemin personnel" in e for e in bad_rep.errors), bad_rep.errors)
 
             bad_mod_plug = Path(tmp) / "bad-mod-plugin"
             shutil.copytree(PLUGIN_ROOT, bad_mod_plug, ignore=shutil.ignore_patterns("__pycache__", "*.pyc"))
@@ -191,7 +193,7 @@ class TestInitAndInstall(unittest.TestCase):
             fail_proc = subprocess.CompletedProcess(
                 args=["validate.py"], returncode=1, stdout="", stderr="Strict error"
             )
-            with mock.patch.object(install, "run_plugin_validation", return_value=fail_proc):
+            with mock.patch.object(installer_core, "run_plugin_validation", return_value=fail_proc):
                 err_buf = io.StringIO()
                 with contextlib.redirect_stderr(err_buf):
                     rc_fail = install.main(["--check", "--strict", "--target", str(target)])
@@ -593,7 +595,321 @@ class TestInitAndInstall(unittest.TestCase):
             self.assertIn("SKILL.md", joined)
             self.assertIn("BOM", joined)
             self.assertIn("templates/AGENTS.md", joined)
-            self.assertIn("AGENTS.md (racine)", joined)
+            self.assertIn("AGENTS.md", joined)
+
+            # Restaure SKILL.md, templates/AGENTS.md et AGENTS.md racine ; casse references/workflows-and-hygiene.md (CRLF + BOM) puis absent -> erreurs bloquantes
+            shutil.copy2(PLUGIN_ROOT / "skills" / "gravity-architect" / "SKILL.md", skill_path)
+            shutil.copy2(PLUGIN_ROOT / "templates" / "AGENTS.md", plug / "templates" / "AGENTS.md")
+            (fake_repo / "AGENTS.md").write_text("# Root Agents\n- OK\n", encoding="utf-8", newline="\n")
+            ref_path = plug / "skills" / "gravity-architect" / "references" / "workflows-and-hygiene.md"
+            ref_path.write_bytes(b"\xef\xbb\xbf# Ref\r\n")
+            ref_bad_rep = validate.Report()
+            validate.validate_plugin(plug, ref_bad_rep)
+            self.assertFalse(ref_bad_rep.ok(strict=True))
+            ref_bad_joined = " | ".join(ref_bad_rep.errors)
+            self.assertIn("workflows-and-hygiene.md", ref_bad_joined)
+            self.assertIn("CRLF", ref_bad_joined)
+
+            ref_path.unlink()
+            ref_missing_rep = validate.Report()
+            validate.validate_plugin(plug, ref_missing_rep)
+            self.assertFalse(ref_missing_rep.ok(strict=True))
+            self.assertTrue(
+                any("workflows-and-hygiene.md introuvable" in e for e in ref_missing_rep.errors),
+                ref_missing_rep.errors,
+            )
+
+    def test_skill_references_hygiene_budgets_and_critical_rules(self) -> None:
+        skill_path = PLUGIN_ROOT / "skills" / "gravity-architect" / "SKILL.md"
+        ref_path = PLUGIN_ROOT / "skills" / "gravity-architect" / "references" / "workflows-and-hygiene.md"
+        rules_path = PLUGIN_ROOT / "rules" / "AGENTS.md"
+
+        self.assertTrue(skill_path.is_file())
+        self.assertTrue(ref_path.is_file())
+        self.assertLessEqual(rules_path.stat().st_size, 513)
+
+        skill_raw = skill_path.read_bytes()
+        ref_raw = ref_path.read_bytes()
+        for label, raw in (("SKILL.md", skill_raw), ("workflows-and-hygiene.md", ref_raw)):
+            self.assertFalse(raw.startswith(b"\xef\xbb\xbf"), f"BOM in {label}")
+            self.assertNotIn(b"\r\n", raw, f"CRLF in {label}")
+
+        self.assertLessEqual(len(skill_raw), 6000, f"SKILL.md exceeds 6000 B ({len(skill_raw)})")
+
+        skill_txt = skill_raw.decode("utf-8")
+        ref_txt = ref_raw.decode("utf-8")
+        meta, _ = validator_core.parse_frontmatter(skill_txt)
+        self.assertEqual(meta.get("name"), "gravity-architect")
+        self.assertLessEqual(len(str(meta.get("description") or "")), 160)
+        self.assertIn("references/workflows-and-hygiene.md", skill_txt)
+
+        for label, rx in validate.PRIVATE_LEAK_RES:
+            self.assertIsNone(rx.search(ref_txt), f"Leak ({label}) in workflows-and-hygiene.md")
+        self.assertIsNone(validate.FORBIDDEN_MOD_RE.search(ref_txt))
+
+        critical_tokens = (
+            "drafted, not deployed",
+            "--ack-editorial",
+            "ecosystem_install.py",
+            "wave_plan_v1",
+            "--export-wave",
+            "/swarm",
+            "quick",
+            "standard",
+            "<= 5",
+            "250k",
+            "exit_plan_mode",
+            "NO_EDITORIAL_CHANGES",
+            "../",
+            "/compact",
+            "PreInvocation",
+            "atelier_status.py",
+            "RequestFeedback=True",
+            "ask_question",
+            "verify_commands",
+            "opt-in",
+        )
+        for token in critical_tokens:
+            self.assertIn(token, skill_txt, f"Missing rule in SKILL.md: {token}")
+            self.assertIn(token, ref_txt, f"Missing rule in workflows-and-hygiene.md: {token}")
+
+        self.assertIn("gravity-metrics", skill_txt)
+        self.assertIn("references/workflows-and-hygiene.md) §3", skill_txt)
+        for token in (
+            "fail-closed",
+            "git push origin dev",
+            "merge dev -> main",
+            "explicit human approval",
+            "gravity-metrics/scripts/cli.py archive <conversation_id>",
+            "--update-sealed",
+            "--force",
+            "silent no-op",
+            "waiting",
+            "fork",
+            "@monitor",
+            "3.8 Flash",
+        ):
+            self.assertIn(token, ref_txt, f"Missing closure/swarm rule in workflows-and-hygiene.md: {token}")
+
+        idx_verifs = ref_txt.index("1. **Reviews & verification")
+        idx_dev_push = ref_txt.index("2. **Auto-closure on `dev`")
+        idx_archive = ref_txt.index("3. **Workshop archiving & `--ack-editorial`")
+        idx_metrics = ref_txt.index("4. **Optional `gravity-metrics`")
+        self.assertLess(idx_verifs, idx_dev_push)
+        self.assertLess(idx_dev_push, idx_archive)
+        self.assertLess(idx_archive, idx_metrics)
+
+        plugin_readme_txt = (PLUGIN_ROOT / "README.md").read_text(encoding="utf-8")
+        repo_readme_txt = (REPO_ROOT / "README.md").read_text(encoding="utf-8")
+        plugin_json_txt = (PLUGIN_ROOT / "plugin.json").read_text(encoding="utf-8")
+        for doc_label, doc_txt in (
+            ("SKILL.md", skill_txt),
+            ("workflows-and-hygiene.md", ref_txt),
+            ("plugin/README.md", plugin_readme_txt),
+            ("README.md", repo_readme_txt),
+            ("plugin.json", plugin_json_txt),
+        ):
+            self.assertNotIn("handoffs/", doc_txt, f"Legacy handoffs/ drift in {doc_label}")
+            self.assertNotIn("bridge", doc_txt.lower(), f"Bridge mention in {doc_label}")
+            self.assertNotIn("gravity-" + "studio", doc_txt.lower(), f"Legacy studio ref in {doc_label}")
+            self.assertNotIn("gravity_" + "studio", doc_txt.lower(), f"Legacy studio ref in {doc_label}")
+            for forbidden in (
+                "get_job",
+                "manage_thread",
+                "wave_runner.py",
+                "caveman ultra",
+                "last_verified.patch",
+                "skip_separate_planner",
+                "apply_on_pass",
+            ):
+                self.assertNotIn(forbidden, doc_txt, f"Internal workflow ref {forbidden!r} in {doc_label}")
+
+        for doc_label, doc_txt in (
+            ("SKILL.md", skill_txt),
+            ("workflows-and-hygiene.md", ref_txt),
+            ("plugin/README.md", plugin_readme_txt),
+            ("README.md", repo_readme_txt),
+        ):
+            self.assertIn("opt-in", doc_txt, f"Missing opt-in mention in {doc_label}")
+            self.assertIn("swarm", doc_txt.lower(), f"Missing swarm mention in {doc_label}")
+
+    def test_validate_int01_03_06_and_fix_python_cmd_install(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            fake_repo = root / "repo"
+            plug = fake_repo / "plugin"
+            shutil.copytree(PLUGIN_ROOT, plug, ignore=shutil.ignore_patterns("__pycache__", "*.pyc"))
+            (fake_repo / "README.md").write_text("# Repo\n- [Plugin](plugin/README.md)\n", encoding="utf-8", newline="\n")
+
+            ok_rep = validate.Report()
+            validate.validate_plugin(plug, ok_rep)
+            self.assertTrue(ok_rep.ok(strict=True), f"{ok_rep.errors} | {ok_rep.warnings}")
+
+            # 1. Manifeste invalide (SemVer, suggestedPrompts, disabled, author)
+            manifest_path = plug / "plugin.json"
+            orig_manifest = manifest_path.read_text(encoding="utf-8")
+            bad_manifest = json.loads(orig_manifest)
+            bad_manifest["version"] = "not-semver"
+            bad_manifest["disabled"] = "no"
+            bad_manifest["author"] = {"name": ""}
+            bad_manifest["suggestedPrompts"] = ["sans slash", "/cmd", "/ok — " + ("x" * 100)]
+            manifest_path.write_text(json.dumps(bad_manifest), encoding="utf-8", newline="\n")
+            man_rep = validate.Report()
+            validate.validate_plugin(plug, man_rep)
+            self.assertFalse(man_rep.ok(strict=True))
+            man_err = " | ".join(man_rep.errors)
+            self.assertIn("SemVer", man_err)
+            self.assertIn("disabled", man_err)
+            self.assertIn("author", man_err)
+            self.assertIn("suggestedPrompts", man_err)
+            manifest_path.write_text(orig_manifest, encoding="utf-8", newline="\n")
+
+            # 2. hooks.json invalide (clé inconnue, script .py manquant, CRLF)
+            hooks_path = plug / "hooks.json"
+            orig_hooks = hooks_path.read_bytes()
+            hooks_path.write_bytes(b'{"g": {"badKey": true, "PreInvocation": [{"type": "command", "command": "python3 hooks/missing.py"}]}}\r\n')
+            hk_rep = validate.Report()
+            validate.validate_plugin(plug, hk_rep)
+            self.assertFalse(hk_rep.ok(strict=True))
+            hk_err = " | ".join(hk_rep.errors)
+            self.assertIn("clés inconnues", hk_err)
+            self.assertIn("hooks/missing.py", hk_err)
+            self.assertIn("CRLF", hk_err)
+            hooks_path.write_bytes(orig_hooks)
+
+            # 3. BOM sur .svg et liens cassés / file: sur README/SKILL/../README
+            (plug / "assets" / "logo.svg").write_bytes(
+                b"\xef\xbb\xbf" + (PLUGIN_ROOT / "assets" / "logo.svg").read_bytes()
+            )
+            (plug / "README.md").write_text("# Plug\n- [Bad](missing/file.md)\n- [File](file:///tmp/x)\n", encoding="utf-8", newline="\n")
+            (fake_repo / "README.md").write_text("# Repo\n- [Broken](../nope.md)\n", encoding="utf-8", newline="\n")
+            link_rep = validate.Report()
+            validate.validate_plugin(plug, link_rep)
+            self.assertFalse(link_rep.ok(strict=True))
+            lk_err = " | ".join(link_rep.errors)
+            self.assertIn("BOM UTF-8", lk_err)
+            self.assertIn("Lien Markdown relatif cassé dans README.md", lk_err)
+            self.assertIn("Lien 'file:' interdit dans README.md", lk_err)
+            self.assertIn("Lien Markdown relatif cassé dans ../README.md", lk_err)
+
+            # 4. install.py + fix_python_cmd sous Windows simulé (source intacte)
+            src_hooks_before = (PLUGIN_ROOT / "hooks.json").read_text(encoding="utf-8")
+
+            class _FakeWindowsOs:
+                name = "nt"
+
+                def __getattr__(self, attr: str):
+                    return getattr(os, attr)
+
+            target_win = root / "inst-win"
+            with (
+                mock.patch.object(installer_core, "os", _FakeWindowsOs()),
+                mock.patch.object(installer_core, "has_real_python3", return_value=False),
+            ):
+                dry_buf = io.StringIO()
+                with contextlib.redirect_stdout(dry_buf):
+                    self.assertEqual(install.main(["--dry-run", "--target", str(target_win)]), 0)
+                self.assertIn("--fix-python-cmd", dry_buf.getvalue())
+
+                target_nofix = root / "inst-nofix"
+                self.assertEqual(install.main(["--no-fix-python", "--target", str(target_nofix)]), 0)
+                self.assertIn("python3 hooks/pre_invocation_architect.py", (target_nofix / "hooks.json").read_text(encoding="utf-8"))
+
+                with (
+                    mock.patch.object(validator_core, "has_real_python3", return_value=False),
+                    mock.patch.object(validator_core, "_detect_portable_python_cmd", return_value="python"),
+                ):
+                    self.assertEqual(validate.main(["--plugin-root", str(target_nofix), "--fix-python-cmd"]), 0)
+                adapted_hooks = json.loads((target_nofix / "hooks.json").read_text(encoding="utf-8"))
+                self.assertEqual(
+                    adapted_hooks["gravity-architect-command"]["PreInvocation"][0]["command"],
+                    "python hooks/pre_invocation_architect.py",
+                )
+            self.assertEqual((PLUGIN_ROOT / "hooks.json").read_text(encoding="utf-8"), src_hooks_before)
+
+    def test_installer_core_symlink_lock_fallback_and_sources_provenance(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            fake_home = root / "home"
+            fake_home.mkdir()
+            gravity_home = root / "gravity-home"
+            sources_path = gravity_home / "core" / "sources.json"
+            sources_path.parent.mkdir(parents=True, exist_ok=True)
+            existing_gravity_entry = {
+                "plugin_name": "gravity",
+                "repo_dir": str(root / "gravity"),
+                "install_method": "copy",
+                "installed_version": "0.3.0",
+            }
+            sources_path.write_text(
+                json.dumps(
+                    {
+                        "schema_version": 1,
+                        "updated_at": "2026-11-25T10:00:00Z",
+                        "sources": {"gravity": existing_gravity_entry},
+                    },
+                    indent=2,
+                )
+                + "\n",
+                encoding="utf-8",
+                newline="\n",
+            )
+
+            # 1. Symlink target rejection
+            real_dir = root / "real-dir"
+            real_dir.mkdir()
+            sym_target = root / "sym-target"
+            if hasattr(os, "symlink"):
+                os.symlink(real_dir, sym_target)
+                with contextlib.redirect_stderr(io.StringIO()):
+                    self.assertEqual(install.main(["--target", str(sym_target)]), 1)
+
+            # 2. --check / --dry-run do not modify sources.json
+            with (
+                mock.patch.object(Path, "home", return_value=fake_home),
+                mock.patch.dict(os.environ, {"GRAVITY_HOME": str(gravity_home)}),
+            ):
+                self.assertEqual(install.main(["--check"]), 0)
+                self.assertEqual(install.main(["--dry-run"]), 0)
+                self.assertNotIn("gravity-architect", json.loads(sources_path.read_text(encoding="utf-8"))["sources"])
+
+                # 3. Real global install records sources.json atomically and preserves gravity
+                global_target = (fake_home / ".gemini" / "config" / "plugins" / "gravity-architect").resolve()
+                self.assertEqual(install.main(["--scope", "global"]), 0)
+                self.assertTrue(install.is_gravity_architect_plugin_dir(global_target))
+                raw_bytes = sources_path.read_bytes()
+                self.assertFalse(raw_bytes.startswith(b"\xef\xbb\xbf"))
+                self.assertNotIn(b"\r\n", raw_bytes)
+                payload = json.loads(raw_bytes.decode("utf-8"))
+                self.assertEqual(payload["schema_version"], 1)
+                self.assertEqual(payload["sources"]["gravity"], existing_gravity_entry)
+                entry = payload["sources"]["gravity-architect"]
+                self.assertEqual(entry["plugin_name"], "gravity-architect")
+                self.assertEqual(Path(entry["repo_dir"]), REPO_ROOT.resolve())
+                self.assertEqual(entry["install_method"], "copy")
+                self.assertEqual(Path(entry["target_dir"]), global_target)
+                self.assertTrue(entry["git_sha"])
+
+                # 4. Failed reinstall & --uninstall do not rewrite sources.json
+                before_fail = sources_path.read_text(encoding="utf-8")
+                self.assertEqual(install.main([]), 1)
+                self.assertEqual(sources_path.read_text(encoding="utf-8"), before_fail)
+
+                # 5. is_lock_oserror in-place upgrade fallback on PermissionError
+                lock_err = PermissionError(13, "locked")
+                out_buf = io.StringIO()
+                with (
+                    mock.patch.object(installer_core.os, "rename", side_effect=lock_err),
+                    contextlib.redirect_stdout(out_buf),
+                ):
+                    self.assertEqual(install.main(["--scope", "global", "--force"]), 0)
+                self.assertIn("(in-place)", out_buf.getvalue())
+                self.assertTrue(install.is_gravity_architect_plugin_dir(global_target))
+
+                # 6. Uninstall cleanly
+                self.assertEqual(install.main(["--uninstall"]), 0)
+                self.assertFalse(global_target.exists())
+                self.assertEqual(sources_path.read_text(encoding="utf-8"), before_fail)
 
 
 if __name__ == "__main__":

@@ -1,10 +1,9 @@
 #!/usr/bin/env python3
-"""Validateur strict du plugin autonome Gravity Architect (100 % stdlib Python 3)."""
+"""Strict standalone validator for Gravity Architect (delegates to _shared.validator_core)."""
 
 from __future__ import annotations
 
-import argparse
-import ast
+from dataclasses import replace
 import json
 import os
 from pathlib import Path
@@ -12,512 +11,231 @@ import re
 import subprocess
 import sys
 import tempfile
+from typing import Optional
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 PLUGIN_ROOT_DEFAULT = SCRIPT_DIR.parent
+if str(PLUGIN_ROOT_DEFAULT) not in sys.path:
+    sys.path.insert(0, str(PLUGIN_ROOT_DEFAULT))
 
-OFFICIAL_PLUGIN_FIELDS = {
-    "name",
-    "displayName",
-    "version",
-    "description",
-    "logo",
-    "suggestedPrompts",
-    "author",
-    "homepage",
-    "repository",
-    "disabled",
-}
-ALLOWED_LOCAL_MODULES = {
-    "sync_tracking",
-    "init_workspace",
-    "validate",
-    "core",
-    "io_utils",
-    "discovery",
-    "git_collector",
-    "watches",
-    "delta",
-    "renderers",
-}
-MODULE_CONTRACT_FIELDS = {
-    "schema_version",
-    "id",
-    "plugin_name",
-    "role",
-    "storage",
-    "commands",
-    "capabilities",
-    "ui",
-    "signals",
-}
-ALLOWED_UI_MODES = {"none", "core", "native-mcp-app", "transition-sidecar"}
+from _shared import validator_core  # noqa: E402
+from _shared.validator_core import (  # noqa: E402
+    Report,
+    ValidatorConfig,
+    check_utf8_no_bom_lf,
+    has_real_python3,
+    validate_plugin_tree,
+)
 
-FORBIDDEN_MOD_RE = re.compile(r"\bMod" + r"ule\s+0?\d\b", re.IGNORECASE)
+_detect_portable_python_cmd = validator_core._detect_portable_python_cmd
+fix_python_cmd = validator_core.fix_python_cmd
+FORBIDDEN_MOD_RE = validator_core.FORBIDDEN_MOD_RE
 PRIVATE_LEAK_RES = (
-    (
-        "chemin personnel",
-        re.compile(
-            r"(?:"
-            + r"[A-Za-z]:\\" + r"(?:Users|Documents)\\"
-            + r"|[A-Za-z]:\\[^\\\s\"'`]+\\" + r"Documents\\"
-            + r"|/Us" + r"ers/[^/\s\"'`]+/"
-            + r"|/ho" + r"me/[^/\s\"'`]+/"
-            + r")",
-            re.IGNORECASE,
-        ),
-    ),
-    ("référence projet frère", re.compile(r"gravity-" + r"metrics", re.IGNORECASE)),
     ("archive interne", re.compile(r"BLUE" + r"PRINT-v0\.1", re.IGNORECASE)),
     ("dossier atelier local", re.compile(r"gravity_" + r"projects", re.IGNORECASE)),
 )
-
+ARCHITECT_ALLOWED_MODULES = validator_core.ALLOWED_LOCAL_MODULES | frozenset(
+    {"scripts", "hooks", "waves", "atelier_status", "pre_invocation_architect", "validate"}
+)
 REQUIRED_TEMPLATES = (
     "AGENTS.md",
     "ECOSYSTEM.md",
     "projects.json",
     "spec-template.md",
-    "handoff-template.md",
+    "task-template.md",
     "project-card-template.md",
     "impact-template.md",
-    "archives-readme.md",
     "audit-code-readme.md",
     "audit-code-template.md",
 )
 
 
-class Report:
-    """Collecteur d'erreurs, d'avertissements et d'informations de validation."""
-
-    def __init__(self) -> None:
-        self.errors: list[str] = []
-        self.warnings: list[str] = []
-        self.infos: list[str] = []
-
-    def error(self, msg: str) -> None:
-        self.errors.append(msg)
-
-    def warn(self, msg: str) -> None:
-        self.warnings.append(msg)
-
-    def info(self, msg: str) -> None:
-        self.infos.append(msg)
-
-    def ok(self, strict: bool) -> bool:
-        return len(self.errors) == 0 and (not strict or len(self.warnings) == 0)
-
-
-def _configure_stdio() -> None:
-    for stream in (sys.stdout, sys.stderr):
-        reconf = getattr(stream, "reconfigure", None)
-        if callable(reconf):
-            try:
-                reconf(encoding="utf-8", errors="replace")
-            except Exception:
-                pass
+def _extract_markdown_targets(md_text: str) -> list[str]:
+    targets: list[str] = []
+    in_fence, fence_char, fence_len = False, "", 0
+    for line in md_text.splitlines():
+        if (fm := validator_core.MD_FENCE_RE.match(line)):
+            marker = fm.group(1)
+            if not in_fence:
+                in_fence, fence_char, fence_len = True, marker[0], len(marker)
+                continue
+            if marker[0] == fence_char and len(marker) >= fence_len and line.strip() == marker:
+                in_fence = False
+                continue
+        if in_fence:
+            continue
+        for m in validator_core.MD_LINK_RE.finditer(validator_core.INLINE_CODE_RE.sub("", line)):
+            rt = m.group(1).strip()
+            t = rt[1 : rt.index(">")].strip() if (rt.startswith("<") and ">" in rt) else (rt.split()[0] if rt else "")
+            if t:
+                targets.append(t)
+    return targets
 
 
-def _check_stdlib_only(py_file: Path, report: Report) -> None:
-    stdlib_names_raw = getattr(sys, "stdlib_module_names", None)
-    if not stdlib_names_raw:
-        report.error("Python 3.10+ requis pour la validation stdlib.")
-        return
-    allowed = set(stdlib_names_raw) | ALLOWED_LOCAL_MODULES
+def _check_markdown_file_links(md_path: Path, label: str, report: Report, *, check_broken: bool) -> None:
     try:
-        tree = ast.parse(py_file.read_text(encoding="utf-8"), filename=str(py_file))
-    except SyntaxError as exc:
-        report.error(f"Syntaxe Python invalide dans {py_file}: {exc}")
+        content = md_path.read_text(encoding="utf-8", errors="replace")
+    except OSError as exc:
+        report.error(f"Impossible de lire {label} : {exc}")
         return
-    for node in ast.walk(tree):
-        mods: list[str] = []
-        if isinstance(node, ast.Import):
-            mods = [a.name.split(".")[0] for a in node.names]
-        elif isinstance(node, ast.ImportFrom) and node.module and node.level == 0:
-            mods = [node.module.split(".")[0]]
-        for mod in mods:
-            if mod not in allowed:
-                report.error(f"Import non stdlib {mod!r} détecté dans {py_file}")
+    for target in _extract_markdown_targets(content):
+        lower = target.lower()
+        if lower.startswith("file:"):
+            report.error(f"Lien 'file:' interdit dans {label} : {target!r}")
+            continue
+        if not check_broken or lower.startswith(validator_core.IGNORED_LINK_PREFIXES):
+            continue
+        rel = target.split("#", 1)[0].split("?", 1)[0]
+        if rel and not (md_path.parent / rel).resolve().exists():
+            report.error(f"Lien Markdown relatif cassé dans {label} : {target!r}")
 
 
-def _validate_manifest(root: Path, report: Report) -> None:
-    manifest_path = root / "plugin.json"
-    if not manifest_path.is_file():
-        report.error("plugin.json introuvable à la racine du plugin.")
+def _check_hooks_extra(root: Path, report: Report) -> None:
+    hooks_json = root / "hooks.json"
+    if not hooks_json.is_file():
         return
-
-    raw_bytes = manifest_path.read_bytes()
-    if raw_bytes.startswith(b"\xef\xbb\xbf"):
-        report.error("plugin.json ne doit pas contenir de BOM UTF-8.")
-
     try:
-        manifest = json.loads(raw_bytes.decode("utf-8-sig"))
-    except Exception as exc:
-        report.error(f"plugin.json invalide : {exc}")
+        raw = hooks_json.read_bytes()
+        data = json.loads((raw[3:] if raw.startswith(validator_core.UTF8_BOM) else raw).decode("utf-8"))
+    except (OSError, UnicodeDecodeError, ValueError):
         return
-
-    if not isinstance(manifest, dict):
-        report.error("plugin.json doit contenir un objet JSON.")
+    if not isinstance(data, dict):
         return
-
-    unknown_keys = sorted(set(manifest.keys()) - OFFICIAL_PLUGIN_FIELDS)
-    if unknown_keys:
-        report.error(f"plugin.json : champs non officiels détectés : {unknown_keys}")
-
-    if manifest.get("name") != "gravity-architect":
-        report.error(
-            f"plugin.json : 'name' doit être 'gravity-architect', obtenu {manifest.get('name')!r}."
-        )
-
-    missing_req = [
-        k for k in OFFICIAL_PLUGIN_FIELDS - {"disabled"} if k not in manifest
-    ]
-    if missing_req:
-        report.error(f"plugin.json : champs requis manquants : {missing_req}")
-
-    desc = str(manifest.get("description") or "")
-    if not desc or len(desc) > 160:
-        report.error(f"plugin.json : 'description' vide ou > 160 caractères ({len(desc)}).")
-
-    prompts = manifest.get("suggestedPrompts")
-    if (
-        not isinstance(prompts, list)
-        or len(prompts) != 3
-        or not all(isinstance(p, str) and p.strip() for p in prompts)
-    ):
-        report.error("plugin.json : exactement 3 'suggestedPrompts' non vides sont requis.")
-
-    logo_rel = str(manifest.get("logo") or "")
-    logo_path = root / logo_rel
-    if not logo_rel or not logo_path.is_file():
-        report.error(f"Logo introuvable : {logo_rel!r}")
-    elif logo_path.suffix.lower() == ".svg":
-        svg = logo_path.read_text(encoding="utf-8", errors="replace")
-        vb = re.search(
-            r"""viewBox\s*=\s*["']0\s+0\s+(\d+(?:\.\d+)?)\s+(\d+(?:\.\d+)?)["']""",
-            svg,
-        )
-        if not vb or float(vb.group(1)) <= 0 or float(vb.group(1)) != float(vb.group(2)):
-            report.error(f"Logo {logo_rel} : viewBox carré 1:1 non détecté.")
+    allowed = {"enabled", *validator_core.FLAT_HOOK_EVENTS, *validator_core.GROUPED_HOOK_EVENTS}
+    for gname, gcfg in data.items():
+        if isinstance(gcfg, dict) and (unknown := sorted(set(gcfg.keys()) - allowed)):
+            report.error(f"hooks.json ({gname}) : clés inconnues {unknown}")
 
 
-def _validate_module_contract(root: Path, report: Report) -> None:
-    """Valide le contrat module Gravity `config/module.json` (schema_version 1)."""
-    module_path = root / "config" / "module.json"
-    if not module_path.is_file():
-        report.error("config/module.json introuvable.")
-        return
-
-    raw_bytes = module_path.read_bytes()
-    if raw_bytes.startswith(b"\xef\xbb\xbf"):
-        report.error("config/module.json ne doit pas contenir de BOM UTF-8.")
-
-    try:
-        mod = json.loads(raw_bytes.decode("utf-8-sig"))
-    except Exception as exc:
-        report.error(f"config/module.json invalide : {exc}")
-        return
-
-    if not isinstance(mod, dict):
-        report.error("config/module.json doit contenir un objet JSON.")
-        return
-
-    unknown_keys = sorted(set(mod.keys()) - MODULE_CONTRACT_FIELDS)
-    if unknown_keys:
-        report.error(f"config/module.json : champs non reconnus : {unknown_keys}")
-
-    missing_keys = sorted(MODULE_CONTRACT_FIELDS - set(mod.keys()))
-    if missing_keys:
-        report.error(f"config/module.json : champs requis manquants : {missing_keys}")
-
-    sv = mod.get("schema_version")
-    if isinstance(sv, bool) or sv != 1:
-        report.error(f"config/module.json : 'schema_version' doit valoir 1 (obtenu {sv!r}).")
-
-    mod_id = mod.get("id")
-    if not isinstance(mod_id, str) or not re.match(r"^[a-z0-9][a-z0-9-]{0,31}$", mod_id):
-        report.error(f"config/module.json : 'id' invalide ({mod_id!r}).")
-
-    plugin_name = mod.get("plugin_name")
-    if not isinstance(plugin_name, str) or plugin_name != "gravity-architect":
-        report.error(
-            f"config/module.json : 'plugin_name' doit être 'gravity-architect' (obtenu {plugin_name!r})."
-        )
-
-    role = mod.get("role")
-    if not isinstance(role, str) or not role.strip():
-        report.error("config/module.json : 'role' doit être une chaîne non vide.")
-
-    storage = mod.get("storage")
-    if not isinstance(storage, dict):
-        report.error("config/module.json : 'storage' doit être un objet JSON.")
-    else:
-        for sk in ("subdir", "env_override"):
-            val = storage.get(sk)
-            if not isinstance(val, str) or not val.strip():
-                report.error(f"config/module.json : 'storage.{sk}' doit être une chaîne non vide.")
-
-    for list_field in ("commands", "capabilities"):
-        vals = mod.get(list_field)
-        if (
-            not isinstance(vals, list)
-            or not vals
-            or not all(isinstance(x, str) and x.strip() for x in vals)
-        ):
-            report.error(f"config/module.json : '{list_field}' doit être une liste non vide de chaînes.")
-        elif list_field == "commands" and not all(x.startswith("/") for x in vals):
-            report.error("config/module.json : chaque entrée de 'commands' doit commencer par '/'.")
-
-    ui = mod.get("ui")
-    if not isinstance(ui, dict):
-        report.error("config/module.json : 'ui' doit être un objet JSON.")
-    else:
-        if ui.get("mode") not in ALLOWED_UI_MODES:
-            report.error(f"config/module.json : 'ui.mode' invalide ({ui.get('mode')!r}).")
-        if not isinstance(ui.get("target"), str) or not ui["target"].strip():
-            report.error("config/module.json : 'ui.target' doit être une chaîne non vide.")
-
-    signals = mod.get("signals")
-    if not isinstance(signals, dict):
-        report.error("config/module.json : 'signals' doit être un objet JSON.")
-    else:
-        for sig_key in ("produces", "consumes"):
-            svals = signals.get(sig_key)
-            if not isinstance(svals, list) or not all(
-                isinstance(x, str) and x.strip() for x in svals
-            ):
-                report.error(
-                    f"config/module.json : 'signals.{sig_key}' doit être une liste de chaînes."
-                )
-
-
-def _validate_skills(root: Path, report: Report) -> None:
-    skills_dir = root / "skills"
-    if not skills_dir.is_dir():
-        report.error("Dossier requis manquant : skills/gravity-architect/")
-        return
-
-    names = [p.name for p in sorted(skills_dir.iterdir()) if p.is_dir()]
-    if names != ["gravity-architect"]:
-        report.error(f"skills/ doit contenir uniquement 'gravity-architect/' (trouvé : {names}).")
-        return
-
-    skill_md = skills_dir / "gravity-architect" / "SKILL.md"
-    if not skill_md.is_file():
-        report.error("skills/gravity-architect/SKILL.md introuvable.")
-        return
-
-    raw_bytes = _check_markdown_hygiene(
-        skill_md, "skills/gravity-architect/SKILL.md", 6000, report
-    )
-    txt = raw_bytes.decode("utf-8", errors="replace")
-    fm_match = re.match(r"^\s*---\r?\n(.*?)\r?\n---\r?\n", txt, re.DOTALL)
-    if not fm_match:
-        report.error("skills/gravity-architect/SKILL.md : frontmatter YAML manquant.")
-        return
-    fm = fm_match.group(1)
-    if not re.search(r"^name:\s*gravity-architect\s*$", fm, re.MULTILINE):
-        report.error("skills/gravity-architect/SKILL.md : 'name: gravity-architect' manquant.")
-    desc_m = re.search(r"^description:\s*(.+)$", fm, re.MULTILINE)
-    if not desc_m or not desc_m.group(1).strip():
-        report.error("skills/gravity-architect/SKILL.md : 'description' manquante ou vide.")
-
-
-def _check_markdown_hygiene(
-    path: Path, label: str, max_bytes: int, report: Report
-) -> bytes:
-    """Vérifie UTF-8 sans BOM, LF et le budget octets maximal d'un fichier Markdown."""
-    raw_bytes = path.read_bytes()
-    if raw_bytes.startswith(b"\xef\xbb\xbf"):
-        report.error(f"{label} ne doit pas contenir de BOM UTF-8.")
-    if b"\r\n" in raw_bytes:
-        report.error(f"{label} doit utiliser des fins de ligne LF (\\n), CRLF détecté.")
-    if len(raw_bytes) > max_bytes:
-        report.error(f"{label} dépasse {max_bytes} octets ({len(raw_bytes)}).")
-    return raw_bytes
-
-
-def _validate_rules_and_templates(root: Path, report: Report) -> None:
-    rules_file = root / "rules" / "AGENTS.md"
-    if not rules_file.is_file():
-        report.error("rules/AGENTS.md introuvable.")
-    else:
-        raw_bytes = _check_markdown_hygiene(
-            rules_file, "rules/AGENTS.md", 1000, report
-        )
-        if 600 < len(raw_bytes) <= 1000:
-            report.warn(
-                f"rules/AGENTS.md pèse {len(raw_bytes)} octets (cible recommandée : <= 600 octets)."
-            )
-        rules_txt = raw_bytes.decode("utf-8", errors="replace")
-        if rules_txt.lstrip().startswith("---"):
-            report.error("rules/AGENTS.md ne doit pas contenir de frontmatter YAML.")
-
-    if root.name == "plugin" and (root.parent / "AGENTS.md").is_file():
-        _check_markdown_hygiene(
-            root.parent / "AGENTS.md", "AGENTS.md (racine)", 2500, report
-        )
-
-    templates_dir = root / "templates"
-    if not templates_dir.is_dir():
+def _check_templates(root: Path, report: Report) -> None:
+    tpl_dir = root / "templates"
+    if not tpl_dir.is_dir():
         report.error("Dossier requis manquant : templates/")
         return
-
     for tpl_name in REQUIRED_TEMPLATES:
-        if not (templates_dir / tpl_name).is_file():
+        if not (tpl_dir / tpl_name).is_file():
             report.error(f"Template requis manquant : templates/{tpl_name}")
-
-    tpl_agents = templates_dir / "AGENTS.md"
-    if tpl_agents.is_file():
-        _check_markdown_hygiene(tpl_agents, "templates/AGENTS.md", 2500, report)
-
-    tpl_cfg = templates_dir / "projects.json"
-    if tpl_cfg.is_file():
+    if (tpl_agents := tpl_dir / "AGENTS.md").is_file():
+        check_utf8_no_bom_lf(tpl_agents, "templates/AGENTS.md", report, max_bytes=2500)
+    if (tpl_cfg := tpl_dir / "projects.json").is_file():
         try:
             data = json.loads(tpl_cfg.read_text(encoding="utf-8"))
             if not isinstance(data, dict) or data.get("schema_version") != 5:
                 report.error("templates/projects.json doit définir schema_version=5.")
-            elif "privacy" in data:
-                priv = data["privacy"]
-                if not isinstance(priv, dict) or not isinstance(priv.get("public_mode"), bool):
-                    report.error("templates/projects.json : 'privacy.public_mode' doit être un booléen.")
+            else:
+                if "privacy" in data:
+                    priv = data["privacy"]
+                    if not isinstance(priv, dict) or not isinstance(priv.get("public_mode"), bool):
+                        report.error("templates/projects.json : 'privacy.public_mode' doit être un booléen.")
+                if "post_commit_install_cmd" in data:
+                    cmd = data["post_commit_install_cmd"]
+                    ok_cmd = cmd is None or (isinstance(cmd, str) and bool(cmd.strip())) or (isinstance(cmd, list) and bool(cmd) and all(isinstance(x, str) and bool(x.strip()) for x in cmd))
+                    if not ok_cmd:
+                        report.error("templates/projects.json : 'post_commit_install_cmd' doit être str, list[str] ou null.")
+                if "verify_commands" in data:
+                    vcmds = data["verify_commands"]
+                    if not isinstance(vcmds, list) or not all(isinstance(x, str) and bool(x.strip()) for x in vcmds):
+                        report.error("templates/projects.json : 'verify_commands' doit être une liste de chaînes non vides.")
         except Exception as exc:
             report.error(f"templates/projects.json invalide : {exc}")
 
 
 def _run_e2e_dry_run(root: Path, report: Report) -> None:
-    init_script = root / "scripts" / "init_workspace.py"
-    sync_script = root / "scripts" / "sync_tracking.py"
+    init_script, sync_script = root / "scripts" / "init_workspace.py", root / "scripts" / "sync_tracking.py"
     if not init_script.is_file() or not sync_script.is_file():
         report.error("Scripts init_workspace.py ou sync_tracking.py manquants.")
         return
-
     with tempfile.TemporaryDirectory() as tmp:
         tmp_path = Path(tmp)
-        demo_repo = tmp_path / "demo-app"
+        demo_repo, ws_dir, arch_home = tmp_path / "demo-app", tmp_path / "atelier", tmp_path / "architect-home"
         demo_repo.mkdir(parents=True)
-        (demo_repo / "package.json").write_text(
-            '{"name": "demo-app", "version": "1.2.3"}\n', encoding="utf-8"
-        )
-        ws_dir = tmp_path / "atelier"
-
-        env = dict(os.environ)
-        env["PYTHONDONTWRITEBYTECODE"] = "1"
+        (demo_repo / "package.json").write_text('{"name": "demo-app", "version": "1.2.3"}\n', encoding="utf-8")
+        env = {**os.environ, "PYTHONDONTWRITEBYTECODE": "1", "GRAVITY_ARCHITECT_HOME": str(arch_home)}
         env.pop("GRAVITY_ARCHITECT_WORKSPACE", None)
-
-        p_init = subprocess.run(
-            [
-                sys.executable,
-                "-B",
-                str(init_script),
-                "--workspace",
-                str(ws_dir),
-                "--name",
-                "Atelier Dry-Run",
-                "--project",
-                f"demo={demo_repo}",
-            ],
-            capture_output=True,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
-            env=env,
-            timeout=10,
-            check=False,
-        )
+        env.pop("GRAVITY_ARCHITECT_SKIP_REGISTRY", None)
+        p_init = subprocess.run([sys.executable, "-B", str(init_script), "--workspace", str(ws_dir), "--name", "Atelier Dry-Run", "--project", f"demo={demo_repo}"], capture_output=True, text=True, encoding="utf-8", errors="replace", env=env, timeout=10, check=False)
         if p_init.returncode != 0:
             report.error(f"Dry-run init_workspace.py échoué : {p_init.stderr or p_init.stdout}")
             return
-
-        p_sync = subprocess.run(
-            [
-                sys.executable,
-                "-B",
-                str(sync_script),
-                "--workspace",
-                str(ws_dir),
-                "--offline",
-                "--check",
-                "--print-delta",
-            ],
-            capture_output=True,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
-            env=env,
-            timeout=10,
-            check=False,
-        )
+        reg_path, reg_raw_before, reg_mtime_before = arch_home / "ateliers.json", None, None
+        if reg_path.is_file():
+            try:
+                reg_raw_before = reg_path.read_text(encoding="utf-8")
+                reg_data = json.loads(reg_raw_before)
+                reg_mtime_before = reg_path.stat().st_mtime_ns
+                reg_paths = [str(it.get("workspace_path") or "") for it in (reg_data.get("ateliers") or []) if isinstance(it, dict)]
+                if str(ws_dir.resolve()) not in reg_paths:
+                    report.error("Dry-run ateliers.json ne contient pas l'atelier initialisé.")
+                    return
+            except Exception as exc:
+                report.error(f"Dry-run ateliers.json illisible : {exc}")
+                return
+        p_sync = subprocess.run([sys.executable, "-B", str(sync_script), "--workspace", str(ws_dir), "--offline", "--check", "--print-delta"], capture_output=True, text=True, encoding="utf-8", errors="replace", env=env, timeout=10, check=False)
         if p_sync.returncode != 0:
             report.error(f"Dry-run sync_tracking.py échoué : {p_sync.stderr or p_sync.stdout}")
             return
         if "EDITORIAL_UPDATE_REQUIRED" not in p_sync.stdout and "NO_EDITORIAL_CHANGES" not in p_sync.stdout:
             report.error(f"Sortie inattendue du dry-run sync_tracking.py : {p_sync.stdout!r}")
+        if reg_raw_before is None and reg_path.is_file():
+            report.error("Dry-run sync_tracking.py --check a créé ateliers.json.")
+        elif reg_raw_before is not None and (reg_path.stat().st_mtime_ns != reg_mtime_before or reg_path.read_text(encoding="utf-8") != reg_raw_before):
+            report.error("Dry-run sync_tracking.py --check a modifié ateliers.json.")
 
 
-def validate_plugin(root: Path, report: Report) -> None:
-    """Audite la structure, le manifeste, le contrat module, les templates, la stdlib et l'absence de fuites."""
-    _validate_manifest(root, report)
-    _validate_module_contract(root, report)
-    _validate_skills(root, report)
-    _validate_rules_and_templates(root, report)
-
-    for sub in ("assets", "config", "core", "rules", "scripts", "skills", "templates"):
-        if not (root / sub).is_dir():
-            report.error(f"Dossier requis manquant : {sub}/")
-
+def _extra_architect_checks(root: Path, report: Report) -> None:
     if not (root / "README.md").is_file():
         report.error("README.md manquant à la racine du plugin.")
-
-    for py_file in sorted(root.rglob("*.py")):
-        if "__pycache__" in py_file.parts:
-            continue
-        _check_stdlib_only(py_file, report)
-
-    for fpath in sorted(root.rglob("*")):
-        if not fpath.is_file() or "__pycache__" in fpath.parts:
-            continue
-        if fpath.suffix.lower() not in (".py", ".md", ".json", ".svg"):
-            continue
-        content = fpath.read_text(encoding="utf-8", errors="replace")
-        if FORBIDDEN_MOD_RE.search(content):
-            report.error(f"Jargon interdit détecté dans {fpath}")
-        for label, rx in PRIVATE_LEAK_RES:
-            if rx.search(content):
-                report.error(f"Fuite spécifique détectée ({label}) dans {fpath}")
-
+    else:
+        _check_markdown_file_links(root / "README.md", "README.md", report, check_broken=False)
+    skills_dir = root / "skills"
+    if skills_dir.is_dir():
+        names = [p.name for p in sorted(skills_dir.iterdir()) if p.is_dir()]
+        if names != ["gravity-architect"]:
+            report.error(f"skills/ doit contenir uniquement 'gravity-architect/' (trouvé : {names}).")
+        skill_md = skills_dir / "gravity-architect" / "SKILL.md"
+        if skill_md.is_file():
+            _check_markdown_file_links(skill_md, "skills/gravity-architect/SKILL.md", report, check_broken=False)
+        refs_dir = skills_dir / "gravity-architect" / "references"
+        if not (refs_dir / "workflows-and-hygiene.md").is_file():
+            report.error("skills/gravity-architect/references/workflows-and-hygiene.md introuvable.")
+        if refs_dir.is_dir():
+            for ref_md in sorted(refs_dir.glob("*.md")):
+                if ref_md.is_file():
+                    lbl = f"skills/gravity-architect/references/{ref_md.name}"
+                    check_utf8_no_bom_lf(ref_md, lbl, report, max_bytes=None)
+                    _check_markdown_file_links(ref_md, lbl, report, check_broken=True)
+    if root.name == "plugin" and (root.parent / "README.md").is_file():
+        _check_markdown_file_links(root.parent / "README.md", "../README.md", report, check_broken=True)
+    _check_hooks_extra(root, report)
+    _check_templates(root, report)
     _run_e2e_dry_run(root, report)
 
 
-def main(argv: list[str] | None = None) -> int:
-    _configure_stdio()
-    parser = argparse.ArgumentParser(description="Validateur Gravity Architect")
-    parser.add_argument("--strict", action="store_true", help="Échoue également sur les avertissements.")
-    parser.add_argument(
-        "--plugin-root",
-        type=Path,
-        default=PLUGIN_ROOT_DEFAULT,
-        help="Racine du plugin gravity-architect à auditer.",
-    )
-    args = parser.parse_args(argv)
-    plugin_root = args.plugin_root.expanduser().resolve()
+_BASE_CFG = ValidatorConfig(
+    plugin_root=PLUGIN_ROOT_DEFAULT,
+    expected_plugin_name="gravity-architect",
+    expected_module_id="architect",
+    required_dirs=("assets", "config", "core", "hooks", "rules", "scripts", "skills", "templates", "_shared"),
+    allowed_local_modules=ARCHITECT_ALLOWED_MODULES,
+    extra_forbidden_patterns=PRIVATE_LEAK_RES,
+    require_module_contract=True,
+    require_hooks_config=True,
+    require_rules_agents=True,
+    rules_warn_bytes=600,
+    rules_max_bytes=1000,
+    skill_max_bytes=6000,
+    repo_agents_max_bytes=2500,
+    extra_check_fn=_extra_architect_checks,
+)
 
-    report = Report()
-    validate_plugin(plugin_root, report)
 
-    for info in report.infos:
-        print(f"[INFO]  {info}")
-    for err in report.errors:
-        print(f"[ERROR] {err}")
-    for warn in report.warnings:
-        print(f"[WARN]  {warn}")
+def validate_plugin(root: Path, report: Report) -> None:
+    """Audit plugin structure, manifest, module contract, hooks, templates, stdlib, and leaks."""
+    validate_plugin_tree(replace(_BASE_CFG, plugin_root=root), report)
 
-    if report.ok(args.strict):
-        print(f"[PASS] Validation Plugin réussie (0 erreur, {len(report.warnings)} avertissement).")
-        return 0
-    print(
-        f"[FAIL] Validation Plugin échouée ({len(report.errors)} erreur(s), {len(report.warnings)} avertissement(s))."
-    )
-    return 1
+
+def main(argv: Optional[list[str]] = None) -> int:
+    return validator_core.run_cli(_BASE_CFG, argv, description="Gravity Architect strict validator")
 
 
 if __name__ == "__main__":

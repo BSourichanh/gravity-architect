@@ -8,6 +8,7 @@ import io
 import json
 import os
 from pathlib import Path
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -15,11 +16,44 @@ from unittest import mock
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 PLUGIN_ROOT = REPO_ROOT / "plugin"
+HOOK_SCRIPT = PLUGIN_ROOT / "hooks" / "pre_invocation_architect.py"
 sys.path.insert(0, str(PLUGIN_ROOT))
 sys.path.insert(0, str(PLUGIN_ROOT / "scripts"))
 
 import atelier_status  # noqa: E402
 import init_workspace  # noqa: E402
+
+
+def _run_hook(
+    stdin_text: str,
+    *,
+    cwd: Path,
+    fake_home: Path,
+    arch_home: Path,
+    extra_env: dict[str, str] | None = None,
+) -> subprocess.CompletedProcess[str]:
+    env = dict(os.environ)
+    env["PYTHONDONTWRITEBYTECODE"] = "1"
+    env["HOME"] = str(fake_home)
+    env["USERPROFILE"] = str(fake_home)
+    env["GRAVITY_HOME"] = str(fake_home / ".gemini" / "gravity")
+    env["GRAVITY_ARCHITECT_HOME"] = str(arch_home)
+    env.pop("GRAVITY_ARCHITECT_WORKSPACE", None)
+    if extra_env:
+        env.update(extra_env)
+
+    return subprocess.run(
+        [sys.executable, "-B", str(HOOK_SCRIPT)],
+        input=stdin_text,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        cwd=str(cwd),
+        env=env,
+        timeout=15,
+        check=False,
+    )
 
 
 class TestAtelierStatus(unittest.TestCase):
@@ -257,6 +291,77 @@ class TestAtelierStatus(unittest.TestCase):
                 dst.write_bytes((tpl_dir / tpl_name).read_bytes())
             alerts = collect_atelier_hygiene_alerts(ws, templates_dir=tpl_dir)
             self.assertEqual(alerts, [])
+
+    def test_pre_invocation_architect_hook_bare_vs_passthrough(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            ws = root / "atelier"
+            fake_home = root / "home"
+            fake_home.mkdir()
+            arch_home = root / "arch-home"
+
+            with mock.patch.dict(os.environ, {"GRAVITY_ARCHITECT_HOME": str(arch_home), "GRAVITY_ARCHITECT_SKIP_REGISTRY": "1"}):
+                init_workspace.init_workspace(ws, name="Atelier Hook")
+
+            reg_path = arch_home / "ateliers.json"
+            self.assertFalse(reg_path.exists())
+
+            bare_cases = [
+                {"lastUserInput": "/gravity-architect"},
+                {"lastUserInput": "/gravity-architect:gravity-architect", "invocationNum": 0},
+                {
+                    "userInput": (
+                        "<USER_REQUEST>\n/GRAVITY-ARCHITECT\n</USER_REQUEST>\n"
+                        "<ADDITIONAL_METADATA>time=now</ADDITIONAL_METADATA>\n"
+                        "<USER_SETTINGS_CHANGE>off</USER_SETTINGS_CHANGE>"
+                    ),
+                    "invocationNum": None,
+                },
+                {"prompt": "  /gravity-architect:gravity-architect  "},
+            ]
+            for payload in bare_cases:
+                proc = _run_hook(
+                    json.dumps(payload),
+                    cwd=ws,
+                    fake_home=fake_home,
+                    arch_home=arch_home,
+                )
+                self.assertEqual(proc.returncode, 0, msg=proc.stderr or proc.stdout)
+                self.assertTrue(proc.stdout.isascii(), msg=f"Output must be ASCII-safe: {proc.stdout!r}")
+                out = json.loads(proc.stdout.strip())
+                self.assertEqual(out.get("terminationBehavior"), "terminate")
+                steps = out.get("injectSteps") or []
+                self.assertEqual(len(steps), 1)
+                md = (steps[0].get("systemMessage") or {}).get("metadata", {}).get("user_markdown") or ""
+                self.assertIn("Atelier Hook", md)
+                self.assertIn("Specs actives", md)
+                self.assertIn("Tasks actives", md)
+                self.assertNotIn("bridge", md.lower())
+                self.assertFalse(reg_path.exists())
+
+            passthrough_inputs = [
+                "",
+                "{not-json",
+                "[]",
+                json.dumps({"lastUserInput": "/gravity-architect", "invocationNum": 1}),
+                json.dumps({"lastUserInput": "/gravity-architect", "invocationNum": True}),
+                json.dumps({"lastUserInput": "/gravity-architect", "invocationNum": False}),
+                json.dumps({"lastUserInput": "/gravity-architect sync"}),
+                json.dumps({"lastUserInput": "/gravity-architect init"}),
+                json.dumps({"lastUserInput": "/gravity-architect frame new feature"}),
+                json.dumps({"lastUserInput": "/gravity"}),
+                json.dumps({"lastUserInput": "Hello Architect"}),
+            ]
+            for raw in passthrough_inputs:
+                proc = _run_hook(
+                    raw,
+                    cwd=ws,
+                    fake_home=fake_home,
+                    arch_home=arch_home,
+                )
+                self.assertEqual(proc.returncode, 0, msg=proc.stderr or proc.stdout)
+                self.assertEqual(json.loads(proc.stdout.strip()), {})
+                self.assertFalse(reg_path.exists())
 
 
 if __name__ == "__main__":

@@ -1,44 +1,47 @@
 # Gravity Architect
 
-> ### Démarrage 2 min & Place dans l'écosystème
-> - **Place :** **Palier 3 — Multi-projets** *(prérequis : [`gravity`](https://github.com/BSourichanh/gravity) Core)*
-> - **Rôle :** Orchestrer un atelier de conception Hot/Cold (`specs/`, `handoffs/`, `audits/code/`) et suivre plusieurs dépôts en lecture seule.
-> - **Démarrage :** `/gravity-architect init` puis `/gravity-architect sync`
-> - **Hub documentaire (`gravity/docs/`) :** [Démarrage rapide](https://github.com/BSourichanh/gravity/blob/main/docs/getting-started.md) · [Parcours utilisateur](https://github.com/BSourichanh/gravity/blob/main/docs/user-journey.md) · [Aide-mémoire commandes](https://github.com/BSourichanh/gravity/blob/main/docs/command-cheatsheet.md) · [Dépannage & cycle de vie](https://github.com/BSourichanh/gravity/blob/main/docs/troubleshooting-and-lifecycle.md)
+> ### 2-Minute Quickstart & Ecosystem Role
+> - **Tier:** **Tier 3 — Multi-Project** *(prerequisite: [`gravity`](https://github.com/BSourichanh/gravity) Core)*
+> - **Role:** Orchestrate a Hot/Cold design workshop (`specs/`, `tasks/`, `audits/code/`) and track multiple repositories in strict read-only mode.
+> - **Start:** `/gravity-architect init` then `/gravity-architect sync` (or bare `/gravity-architect` for 0-token status)
+> - **Docs Hub (`gravity/docs/`):** [Getting Started](https://github.com/BSourichanh/gravity/blob/main/docs/getting-started.md) · [User Journey](https://github.com/BSourichanh/gravity/blob/main/docs/user-journey.md) · [Command Cheatsheet](https://github.com/BSourichanh/gravity/blob/main/docs/command-cheatsheet.md) · [Troubleshooting & Lifecycle](https://github.com/BSourichanh/gravity/blob/main/docs/troubleshooting-and-lifecycle.md)
 
-> Plugin Antigravity générique (**100 % bibliothèque standard Python 3.10+**) de l'écosystème [Gravity](https://github.com/BSourichanh/gravity) (aux côtés de [Gravity Metrics](https://github.com/BSourichanh/gravity-metrics)) dédié au cadrage d'architecture, au brainstorming multi-projets, à la production de spécifications (`specs/`) et de briefs autonomes (`handoffs/`), avec gestion **Hot / Cold**, mode confidentiel (`privacy.public_mode`) et synchronisation lecture seule des dépôts suivis.
+> Generic Antigravity plugin (**100% Python 3.10+ standard library**) in the [Gravity](https://github.com/BSourichanh/gravity) ecosystem dedicated to architecture framing, multi-project design workshops, specifications (`specs/`), wave-planned tasks (`tasks/` + `wave_plan_v1`), **Hot / Cold** token budgets, privacy mode (`privacy.public_mode`), and read-only multi-repository tracking.
 
 ---
 
-## Arborescence
+## Repository Layout
 
 ```text
 gravity-architect/
-├── AGENTS.md                        # Charte développeur du plugin (≤ 2 500 o)
-├── CHANGELOG.md                     # Historique des releases (Keep a Changelog / SemVer)
-├── LICENSE                          # Licence MIT
-├── README.md                        # Documentation du dépôt plugin
-├── install.py                       # Installeur / désinstalleur cross-platform
-├── plugin/                          # Plugin Antigravity autonome
-│   ├── plugin.json                  # Manifeste officiel (9 champs)
-│   ├── config/module.json           # Contrat module Gravity (schema_version: 1)
-│   ├── README.md                    # Guide utilisateur du plugin
-│   ├── assets/logo.svg              # Logo carré 1:1
-│   ├── rules/AGENTS.md              # Règle légère d'activation
-│   ├── skills/gravity-architect/    # Skill /gravity-architect
-│   ├── templates/                   # Modèles d'ateliers Hot/Cold
-│   ├── core/                        # Noyau SRP (io_utils, discovery, git_collector, watches, delta, renderers)
-│   └── scripts/                     # Façades CLI (sync_tracking.py, init_workspace.py) & validate.py
-└── tests/                           # Tests unitaires (unittest)
+├── AGENTS.md                        # Plugin developer charter (<= 2,500 B)
+├── CHANGELOG.md                     # Release history (Keep a Changelog / SemVer)
+├── LICENSE                          # MIT License
+├── README.md                        # Repository documentation
+├── install.py                       # Slim cross-platform installer/uninstaller (~70 L via _shared.installer_core)
+├── plugin/                          # Standalone Antigravity plugin
+│   ├── plugin.json                  # Official 9-field manifest
+│   ├── hooks.json                   # PreInvocation hook configuration (enabled: true)
+│   ├── config/module.json           # Gravity module contract (schema_version: 1)
+│   ├── README.md                    # Plugin user guide
+│   ├── assets/logo.svg              # 1:1 square logo
+│   ├── rules/AGENTS.md              # Lightweight activation rule
+│   ├── hooks/pre_invocation_architect.py # 0-token PreInvocation status hook (_shared.hook_runtime)
+│   ├── _shared/                     # Synced Python 3.10+ stdlib core projected from gravity/shared/gravity_shared/
+│   ├── skills/gravity-architect/    # /gravity-architect skill + references/workflows-and-hygiene.md
+│   ├── templates/                   # Hot/Cold workshop templates (spec, task, project card, audit-code, ...)
+│   ├── core/                        # SRP core (io_utils, discovery, git_collector, watches, delta, renderers, waves)
+│   └── scripts/                     # CLIs (sync_tracking, init_workspace, atelier_status) & slim validate.py (< 300 L)
+└── tests/                           # Standard-library unittest suite
 ```
 
 ---
 
 ## Installation
 
-> Prérequis : **Python 3.10+** (100 % bibliothèque standard, zéro dépendance externe).
+> Requirement: **Python 3.10+** (100% standard library, zero external dependencies).
 
-### Option 1 — Installeur automatique (Recommandé, Windows / macOS / Linux)
+### Option 1 — Automatic Installer (Recommended, Windows / macOS / Linux)
 
 ```bash
 git clone https://github.com/BSourichanh/gravity-architect.git
@@ -46,68 +49,56 @@ cd gravity-architect
 python install.py
 ```
 
-[`install.py`](install.py) copie [`plugin/`](plugin/) vers `~/.gemini/config/plugins/gravity-architect/`, règle les permissions exécutables POSIX (`0755`) et exécute `validate.py --strict` sur une copie temporaire avant installation.
+[`install.py`](install.py) delegates to [`plugin/_shared/installer_core.py`](plugin/_shared/installer_core.py), supporting all **11 CLI flags**, copying [`plugin/`](plugin/) to `~/.gemini/config/plugins/gravity-architect/`, setting POSIX executable permissions (`0755`), rewriting `"python3"` on Windows copies when needed, checking symlink/junction safety, handling locked file fallbacks, running `validate.py --strict` on a staged copy, and recording provenance in `$GRAVITY_HOME/core/sources.json`.
 
-Commandes utiles :
+Useful commands:
 
 ```powershell
-python install.py --check                                 # Vérifier l'environnement et l'état installé
-python install.py --dry-run                               # Prévisualiser les opérations sans écrire
-python install.py --force                                 # Mettre à jour ou réinstaller
-python install.py --scope workspace --workspace <chemin>  # Installer dans un projet cible (.agents/plugins/)
-python install.py --uninstall                             # Désinstaller proprement
+python install.py --check                                 # Inspect environment and installed status
+python install.py --dry-run                               # Preview operations without writing
+python install.py --force                                 # Upgrade or reinstall
+python install.py --scope workspace --workspace <path>    # Install inside a target project (.agents/plugins/)
+python install.py --uninstall                             # Cleanly uninstall
 ```
 
 ### Option 2 — Antigravity CLI (`agy`)
 
 ```bash
 python install.py --method agy
-# ou directement :
+# or directly:
 agy plugin validate ./plugin --strict
 agy plugin install ./plugin
 ```
 
 ---
 
-## Utilisation rapide
+## Quick Usage
 
-Dans un atelier cible (initialisé via `/gravity-architect init` ou `init_workspace.py`) :
+Inside a target workshop (initialized via `/gravity-architect init` or `init_workspace.py`):
 
 ```powershell
-python plugin/scripts/init_workspace.py --workspace ./mon-atelier --discover --json
-python plugin/scripts/init_workspace.py --workspace ./mon-atelier --project ../mon-app --watch antigravity
-python plugin/scripts/init_workspace.py --workspace ./mon-atelier --add ../autre-projet
-python plugin/scripts/sync_tracking.py --workspace ./mon-atelier --print-delta
-python plugin/scripts/sync_tracking.py --workspace ./mon-atelier --offline --ack-editorial --print-delta
+python plugin/scripts/init_workspace.py --workspace ./my-workshop --discover --json
+python plugin/scripts/init_workspace.py --workspace ./my-workshop --project ../my-app --watch antigravity
+python plugin/scripts/init_workspace.py --workspace ./my-workshop --add ../other-repo
+python plugin/scripts/sync_tracking.py --workspace ./my-workshop --print-delta
+python plugin/core/waves.py --check-waves --workspace ./my-workshop --json
+python plugin/core/waves.py --export-wave 1 --workspace ./my-workshop --json
+python plugin/scripts/atelier_status.py --workspace ./my-workshop --json
+python plugin/scripts/sync_tracking.py --workspace ./my-workshop --offline --ack-editorial --print-delta
 ```
 
-Dans Antigravity, utilisez ensuite `/gravity-architect [init|add|sync|status|spec|handoff|archive|audit]` (voir [`plugin/README.md`](plugin/README.md)).
+Inside Antigravity, invoke `/gravity-architect` (0-token `PreInvocation` status) or `/gravity-architect [init|add|sync|status|spec|task|archive|audit]` (see [`plugin/README.md`](plugin/README.md) and [`plugin/skills/gravity-architect/references/workflows-and-hygiene.md`](plugin/skills/gravity-architect/references/workflows-and-hygiene.md)).
 
-### Découpage modulaire `plugin/core/` (`Unreleased`)
-- **Architecture SRP/DRY :** extraction des responsabilités cœur sous `plugin/core/` (`io_utils.py`, `discovery.py`, `git_collector.py`, `watches.py`, `delta.py`, `renderers.py`, tous ≤ 650 L, 100 % stdlib Python 3.10+, écriture atomique UTF-8 sans BOM / LF).
-- **Façades 100 % rétrocompatibles :** `plugin/scripts/sync_tracking.py` (≤ 250 L) et `plugin/scripts/init_workspace.py` (≤ 450 L) ré-exportent l'intégralité des symboles et options CLI existants.
-
-### Garde-fou dépôt produit, principes & ergonomie CLI (`v0.5.0`)
-- **Garde-fou `init_workspace.py` :** refuse (sauf `--force` ou atelier `projects.json` déjà existant) d'initialiser un atelier dans un dépôt produit (`.git` + manifeste code/plugin tel que `plugin/plugin.json`, `pyproject.toml`, `package.json`, `Cargo.toml`, `go.mod`, `pom.xml`, `setup.py`), avec prise en charge `--json`.
-- **Principes d'ingénierie dans `templates/AGENTS.md` :** l'invariant `Challenger` intègre explicitement `KISS, YAGNI, DRY, SOLID, CUPID`.
-- **Ergonomie `sync_tracking.py` :** repli vers `default_architect_home()` (`$GRAVITY_ARCHITECT_HOME` > `$GRAVITY_HOME/architect` > `~/.gemini/gravity/architect`) après détection `cwd` ; options `--max-stdout-bytes` (défaut `8192`, `0` = illimité, résumé compact pointant vers `tracking/snapshots/delta.md`) et `--max-changelog-lines` (défaut `45`).
-- **Hygiène `validate.py --strict` :** plafond strict `plugin/rules/AGENTS.md <= 1 000 o` (avertissement bloquant sous `--strict` au-delà de `600 o`, compacté `<= 520 o`), contrôle BOM/LF/budget sur `plugin/skills/gravity-architect/SKILL.md` (`<= 6 000 o`, compacté `<= 5 800 o`), `AGENTS.md` racine (`<= 2 500 o`) et `plugin/templates/AGENTS.md`.
-
-### Audits Code & Architecture & suivi compact (`v0.4.0`)
-- **Audits isolés (`audits/code/`) :** `init_workspace.py` déploie `audits/code/README.md`, `audits/code/_TEMPLATE.md` et `audits/agents/.gitkeep` ; le dossier `audits/code/` reste strictement séparé d'`audits/agents/`.
-- **Commande `/gravity-architect audit [projet|all]` :** réalise un audit **Code & Architecture** en lecture seule sur les dépôts suivis, rédige `audits/code/<YYYY-MM-DD>-audit-code-<cible>.md` (`CODE-XX-N` `P0`/`P1`/`P2`) et met à jour le journal `audits/code/README.md`.
-- **Handoffs archivés compacts & SemVer CLI :** `ECOSYSTEM.md` résume `handoffs/archive/` sur 1 ligne, les fiches projet limitent l'historique archivé aux 3 plus récents, et la comparaison SemVer CLI distingue `en avance` et `écart` pour éviter les fausses alertes.
-
-### Découverte, presets & confidentialité (`v0.3.0`)
-- **Découverte & ajout incrémental (`init_workspace.py`) :** `--discover [--scan-dir <dir>] [--json]` scanne en lecture seule (profondeur 1, sans jamais sortir du dossier cible implicitement) et `--add <chemin|id=chemin>` ajoute des projets *fail-closed* à un atelier existant.
-- **Presets intégrés :** `--project <chemin>` auto-détecte manifeste plugin, branches (`main`/`master`/`dev`) et rôle ; `--watch antigravity` configure la veille officielle Google Antigravity (`tracking/antigravity/IMPACT.md` depuis `templates/impact-template.md`), `--watch-url id=url` ajoute un changelog Markdown, `--public-mode` active `privacy.public_mode` et `--run-sync --offline` lance la synchro initiale à la demande.
-- **Contrat module :** [`plugin/config/module.json`](plugin/config/module.json) (`id: "architect"`, stockage par défaut `$GRAVITY_ARCHITECT_HOME` > `$GRAVITY_HOME/architect` > `~/.gemini/gravity/architect` via `default_architect_home()`).
-- **Auto-détection `plugin_manifest` :** `plugin/plugin.json` en priorité, puis `{id}-plugin/plugin.json`, puis `plugin.json` (et dérivation automatique de `validator_script`).
-- **Mode public (`privacy.public_mode`):** option opt-in dans `projects.json` (`{"privacy": {"public_mode": true}}` ou `"public_mode": true`) pour filtrer `ECOSYSTEM.md` aux seuls plugins suivis, supprimer les alertes `orphan_plugin_dirs` des répertoires tiers et masquer les chemins absolus machine dans les Markdown générés.
+### Key Capabilities
+- **Shared Core & Slim Entrypoints:** `install.py` (~70 L) and `plugin/scripts/validate.py` (< 300 L) delegate to `plugin/_shared/` (`installer_core`, `validator_core`, `hook_runtime`), synchronized from `gravity/shared/gravity_shared/`.
+- **0-Token Bare `/gravity-architect` Hook:** `plugin/hooks.json` activates `hooks/pre_invocation_architect.py` (`PreInvocation`, `enabled: true`) backed by read-only `scripts/atelier_status.py` (`AUD-05-09` stale `ready` task detection).
+- **Anti-Drift Wave Planning (`core/waves.py`):** fail-closed DAG ordering, file-disjointness per wave, `<= 5` code files per task, hybrid `::`/`~L` anchors, `Spec ID`/`Spec source` (`status == "validated"`)/`Acceptance Criteria Covered` enforcement, `wave_plan_v1` export for native `/swarm` execution (with `run_workflow` available as explicit opt-in).
+- **Isolated Code Audits (`audits/code/`):** read-only Code & Architecture audits (`CODE-XX-N` `P0`/`P1`/`P2`) strictly separated from `audits/agents/`.
+- **Product Repo Guard & Privacy Mode:** `init_workspace.py` refuses accidental initialization inside product repositories without `--force`, and `privacy.public_mode` filters `ECOSYSTEM.md` and masks local machine paths.
 
 ---
 
-## Vérifications développeur
+## Developer Verification
 
 ```powershell
 python plugin/scripts/validate.py --strict
@@ -119,12 +110,12 @@ python -m unittest discover -s tests -p "test_*.py" -v
 
 ## Documentation & Releases
 
-- [`CHANGELOG.md`](CHANGELOG.md) — Historique des releases (`v0.5.0`)
-- [`plugin/README.md`](plugin/README.md) — Guide complet du plugin et des commandes `/gravity-architect`
-- [`AGENTS.md`](AGENTS.md) — Charte, invariants et vérifications obligatoires
+- [`CHANGELOG.md`](CHANGELOG.md) — Release history (`v0.5.1` / `[Unreleased]`)
+- [`plugin/README.md`](plugin/README.md) — Full plugin guide and `/gravity-architect` commands
+- [`AGENTS.md`](AGENTS.md) — Charter, invariants, and mandatory checks
 
 ---
 
-## Licence
+## License
 
-Distribué sous licence MIT — voir [`LICENSE`](LICENSE) pour plus de détails.
+Distributed under the MIT License — see [`LICENSE`](LICENSE) for details.

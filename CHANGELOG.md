@@ -8,6 +8,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **[TASK-ARCH-02] `_shared` projection, slim `install.py`/`validate.py`, `PreInvocation` hook & EN docs (`SPEC-ARCH-01`):**
+  - Projected `plugin/_shared/` and `plugin/.shared_manifest.json` from `gravity/shared/gravity_shared/` via `sync_shared.py --apply --repos gravity-architect`.
+  - Replaced `install.py` (`562` L -> `78` L) with a thin launcher delegating to `_shared.installer_core` (`InstallSpec` + `run_installer`), keeping all 11 CLI flags, symlink/junction safety, `is_lock_oserror` in-place upgrade fallback, Windows `python3` rewrite, `agy --strict`, and atomic locked `sources.json` provenance.
+  - Slimmed `plugin/scripts/validate.py` (`524` L -> `191` L, `< 300` L) onto `_shared.validator_core` with `ARCHITECT_ALLOWED_MODULES`, `REQUIRED_TEMPLATES` (`task-template.md`, excluding `archives-readme.md` and `handoff-template.md`), `hooks.json` unknown group key checks, `references/*.md` + `../README.md` link hygiene, `templates/projects.json` validation, and `_run_e2e_dry_run`.
+  - Ported `plugin/hooks/pre_invocation_architect.py` (`~44` L, `0755`) onto `_shared.hook_runtime` and added `plugin/hooks.json` (`PreInvocation` active `"enabled": true`, `"python3"`).
+  - Updated `plugin/plugin.json` (version `0.5.1`, 9 official fields, EN, zero `handoffs` drift), translated `SKILL.md` (`description <= 160` chars, `<= 6000` B), `README.md`, and `plugin/README.md` to 100% EN, and added `plugin/skills/gravity-architect/references/workflows-and-hygiene.md` (100% EN).
+  - Updated `tests/test_init_and_install.py` for `_shared.{installer_core,validator_core}` & EN docs and enabled `test_pre_invocation_architect_hook_bare_vs_passthrough` in `tests/test_hooks_and_status.py`.
 - **[TASK-ARCH-01] Anti-drift guardrails, DAG/Spec validation & `AUD-05-09` (`SPEC-GOV-02`):**
   - Ported and hardened `plugin/core/io_utils.py` (`<= 650` L) with bilingual FR/EN artifact headers, `TASK_ID_RE`, `SPEC_ID_RE`, `SPEC_SOURCE_RE`, `AC_LINE_RE`, `WAVE_NAME_RE`, `parse_artifact_file()` metadata extraction (`task_id`, `spec_id`, `spec_source`, `acceptance_criteria`, `wave_name`), and `tasks/` + temporary `handoffs/` collection in `collect_concept_artifacts()`.
   - Ported and hardened `plugin/core/waves.py` (`<= 650` L): fail-closed DAG, `<= 5` code files, hybrid `::`/`~L` anchors, `atelier_id` / `workspace_root.name` self-workspace recognition without modifying `projects.json["projects"]`, fail-closed `Spec ID` / `Spec source` (`status == "validated"` inside `specs/`) / `Acceptance Criteria Covered` enforcement, and optional `wave_name` emission in `wave_plan_v1`.

@@ -2,12 +2,12 @@
   "name": "gravity-architect",
   "displayName": "Gravity Architect",
   "version": "0.5.1",
-  "description": "Atelier générique de conception, specs, handoffs et suivi multi-projets lecture seule à architecture Hot/Cold pour Antigravity.",
+  "description": "Generic Hot/Cold design workshop for architecture specs, wave tasks, code audits, and read-only multi-repo tracking in Antigravity.",
   "logo": "assets/logo.svg",
   "suggestedPrompts": [
-    "/gravity-architect init — Créer un atelier Hot/Cold de conception multi-projets",
-    "/gravity-architect sync — Synchroniser les dépôts suivis via micro-delta",
-    "/gravity-architect audit — Auditer code et architecture en lecture seule"
+    "/gravity-architect init — Create a Hot/Cold multi-project design workshop",
+    "/gravity-architect sync — Synchronize tracked repositories via micro-delta",
+    "/gravity-architect audit — Run read-only code and architecture audits"
   ],
   "author": {
     "name": "Gravity Contributors"
