@@ -1,0 +1,48 @@
+# Task — `<projet>` : [Titre court du lot]
+
+- **Task ID :** `TASK-<DOMAINE>-<NN>`
+- **Spec ID :** `SPEC-<DOMAINE>-<NN>`
+- **Spec source :** `specs/YYYY-MM-DD-<slug>.md`
+- **Acceptance Criteria Covered :** `AC-1`
+- **Date / Statut :** `YYYY-MM-DD` — `ready`
+- **Vague :** `1` *(entier >= 1)*
+- **Nom de vague :** `...` *(optionnel)*
+- **Dépôt cible :** `<id>` (../<id>)
+- **Branche attendue :** `refonte/socle`
+- **Dépendances :** `aucune` *(stems exacts de tasks actives dans `tasks/`, ex. `2026-11-26-w1-gravity-shared-core`)*
+- **Profil workflow :** `standard` *(quick | standard | deep)*
+
+---
+
+## Contexte & Objectif
+*Problème et résultat attendu, formulés de façon autonome.*
+
+## Décisions figées
+- Décision 1 : ...
+- Décision 2 : ...
+
+## Périmètre (`<= 5` fichiers code hors tests/docs)
+- **Inclus :**
+  - `chemin/fichier.py` *(code)*
+  - `tests/test_fichier.py` *(test, non-code)*
+  - `CHANGELOG.md` *(entrée `[Unreleased]` produite en worktree, non-code hors quota `<= 5` — 0 édition directe en Phase 4)*
+- **Exclu :** ...
+
+## Ancres exactes
+- `chemin/fichier.py::symbole (~L10-L45)` — *modification attendue*
+- `tests/test_fichier.py` — *couverture unitaire attendue*
+- `CHANGELOG.md` — *entrée `[Unreleased]` en worktree*
+
+## Invariants à respecter
+- *(Reprendre les invariants exacts du dépôt cible : branche `refonte/socle`, conventions Git, 100 % stdlib Python 3.10+, UTF-8/LF, tests et validations obligatoires.)*
+
+## Critères d'acceptation & Vérifications obligatoires
+- [ ] Critère 1
+- [ ] Entrée `[Unreleased]` ajoutée dans `CHANGELOG.md` en worktree (zéro édition directe racine en Phase 4).
+- [ ] Commandes passées avec 0 erreur (`python3` sous Linux/macOS, `python` sous Windows) :
+  ```bash
+  # Commandes du dépôt cible (ex. python3 plugin/scripts/validate.py --strict && python3 -m unittest discover -s tests)
+  ```
+
+## Retour attendu pour l'atelier
+Fournir fichiers modifiés, résumé des tests ajoutés/passés, résultat exact des vérifications et confirmation de l'entrée `CHANGELOG.md`.

@@ -14,30 +14,20 @@ import tempfile
 SCHEMA_VERSION = 5
 
 DEFAULT_HOT_BUDGETS = {
-    "AGENTS.md": 2500,
-    "ECOSYSTEM.md": 6000,
-    "tracking/antigravity/IMPACT.md": 6000,
-    "project_card_max_bytes": 3500,
+    "AGENTS.md": 2500, "ECOSYSTEM.md": 6000,
+    "tracking/antigravity/IMPACT.md": 6000, "project_card_max_bytes": 3500,
 }
 
 AUTO_DISCOVER_SKIP_DIRS = {".git", "__pycache__", "node_modules", ".venv", "venv"}
 
 SECTION_RE = re.compile(r"^##\s+(.+?)\s*$", re.MULTILINE)
-CHANGELOG_SECTION_RE = re.compile(
-    r"^##[ \t]+\[([^\]]+)\](?:[ \t]*-[ \t]*([^\s(]+))?[^\n]*$", re.MULTILINE
-)
+CHANGELOG_SECTION_RE = re.compile(r"^##[ \t]+\[([^\]]+)\](?:[ \t]*-[ \t]*([^\s(]+))?[^\n]*$", re.MULTILINE)
 SYNC_LINE_RE = re.compile(r"^- \*\*Synchronisé le :\*\*.*$", re.MULTILINE)
 DATE_LINE_RE = re.compile(r"^- \*\*Date :\*\*.*$", re.MULTILINE)
-AUTO_BLOCK_RE = re.compile(
-    r"<!-- AUTO:START:[^>]+ -->.*?<!-- AUTO:END:[^>]+ -->",
-    re.DOTALL,
-)
+AUTO_BLOCK_RE = re.compile(r"<!-- AUTO:START:[^>]+ -->.*?<!-- AUTO:END:[^>]+ -->", re.DOTALL)
 MACHINE_ABS_PATH_RE = re.compile(
-    r"(?:"
-    r"(?<![A-Za-z0-9_])[A-Za-z]:[\\/][^\s`\"'<>|)\]]+"
-    r"|\\\\[A-Za-z0-9_.-]+[\\/][^\s`\"'<>|)\]]+"
-    r"|(?<![:\w/])/(?:Users|home|var|tmp|opt|etc|mnt|Volumes|private|root)/[^\s`\"'<>|)\]]+"
-    r")"
+    r"(?:(?<![A-Za-z0-9_])[A-Za-z]:[\\/][^\s`\"'<>|)\]]+|\\\\[A-Za-z0-9_.-]+[\\/][^\s`\"'<>|)\]]+"
+    r"|(?<![:\w/])/(?:Users|home|var|tmp|opt|etc|mnt|Volumes|private|root)/[^\s`\"'<>|)\]]+)"
 )
 SEMVER_RE = re.compile(r"\bv?(\d+(?:\.\d+)+)")
 
@@ -47,24 +37,15 @@ def parse_semver_tuple(raw: str) -> tuple[int, ...] | None:
     if not isinstance(raw, str):
         return None
     match = SEMVER_RE.search(raw.strip())
-    if not match:
-        return None
-    return tuple(int(part) for part in match.group(1).split("."))
+    return tuple(int(part) for part in match.group(1).split(".")) if match else None
 
 
 def compare_cli_versions(local_raw: str, latest_raw: str) -> str:
     """Compare une version CLI locale à la dernière connue ('behind'|'ahead'|'equal')."""
-    local_tuple = parse_semver_tuple(local_raw)
-    latest_tuple = parse_semver_tuple(latest_raw)
+    local_tuple, latest_tuple = parse_semver_tuple(local_raw), parse_semver_tuple(latest_raw)
     if local_tuple is not None and latest_tuple is not None:
-        if local_tuple < latest_tuple:
-            return "behind"
-        if local_tuple > latest_tuple:
-            return "ahead"
-        return "equal"
-    if local_raw.strip().lstrip("v") != latest_raw.strip().lstrip("v"):
-        return "behind"
-    return "equal"
+        return "behind" if local_tuple < latest_tuple else ("ahead" if local_tuple > latest_tuple else "equal")
+    return "behind" if local_raw.strip().lstrip("v") != latest_raw.strip().lstrip("v") else "equal"
 
 
 def configure_utf8_stdio() -> None:
@@ -85,13 +66,8 @@ def write_utf8(path: Path, text: str) -> None:
     tmp_path: Path | None = None
     try:
         with tempfile.NamedTemporaryFile(
-            mode="w",
-            encoding="utf-8",
-            newline="\n",
-            dir=path.parent,
-            prefix=f".{path.name}.",
-            suffix=".tmp",
-            delete=False,
+            mode="w", encoding="utf-8", newline="\n", dir=path.parent,
+            prefix=f".{path.name}.", suffix=".tmp", delete=False,
         ) as fh:
             tmp_path = Path(fh.name)
             fh.write(normalized)
@@ -257,24 +233,15 @@ def tracked_project_keys(snapshot: dict) -> set[str]:
     for proj in snapshot.get("projects") or []:
         if not isinstance(proj, dict):
             continue
-        for val in (
-            proj.get("id"),
-            proj.get("plugin_name"),
-            (proj.get("stable") or {}).get("plugin_name"),
-        ):
-            cleaned = str(val or "").strip()
-            if cleaned:
+        for val in (proj.get("id"), proj.get("plugin_name"), (proj.get("stable") or {}).get("plugin_name")):
+            if cleaned := str(val or "").strip():
                 keys.add(cleaned)
     return keys
 
 
 def visible_installed_plugins(snapshot: dict, public_mode: bool) -> list[dict]:
     """Filtre `installed_plugins` aux seuls plugins suivis lorsque `public_mode` est actif."""
-    installed = [
-        p
-        for p in ((snapshot.get("environment") or {}).get("installed_plugins") or [])
-        if isinstance(p, dict)
-    ]
+    installed = [p for p in ((snapshot.get("environment") or {}).get("installed_plugins") or []) if isinstance(p, dict)]
     if not public_mode:
         return installed
     tracked = tracked_project_keys(snapshot)
@@ -302,18 +269,13 @@ def format_project_display_path(proj: dict, *, public_mode: bool) -> str:
 
 
 def collect_path_replacements(
-    snapshot: dict | None = None,
-    *,
-    concept_root: Path | None = None,
-    gemini_home: Path | None = None,
+    snapshot: dict | None = None, *, concept_root: Path | None = None, gemini_home: Path | None = None,
 ) -> list[tuple[str, str]]:
     """Construit la table ordonnée `(chemin_absolu, masque)` pour la sanitisation Markdown."""
     pairs: list[tuple[str, str]] = []
 
     def _add(raw_path: str | Path | None, token: str) -> None:
-        if not raw_path:
-            return
-        s = str(raw_path).strip()
+        s = str(raw_path or "").strip()
         if not s or not is_machine_absolute_path(s):
             return
         variants = {s, s.rstrip("/\\"), s.replace("\\", "/"), s.replace("/", "\\")}
@@ -322,26 +284,20 @@ def collect_path_replacements(
             variants.update({res, res.replace("\\", "/"), res.replace("/", "\\")})
         except OSError:
             pass
-        for v in variants:
-            if len(v) >= 4:
-                pairs.append((v, token))
+        pairs.extend((v, token) for v in variants if len(v) >= 4)
 
     if isinstance(snapshot, dict):
         env = snapshot.get("environment") or {}
         for p in env.get("installed_plugins") or []:
             if isinstance(p, dict):
-                _add(
-                    p.get("install_path"),
-                    f"<install:{p.get('name') or p.get('dir') or 'plugin'}>",
-                )
+                _add(p.get("install_path"), f"<install:{p.get('name') or p.get('dir') or 'plugin'}>")
         _add(env.get("plugins_dir"), "<plugins-dir>")
         _add(env.get("agy_path"), "<agy>")
         for proj in snapshot.get("projects") or []:
             if isinstance(proj, dict):
                 pid = str(proj.get("id") or "project")
                 _add(proj.get("path"), f"<repo:{pid}>")
-                disp = str(proj.get("display_path") or "")
-                if is_machine_absolute_path(disp):
+                if is_machine_absolute_path(disp := str(proj.get("display_path") or "")):
                     _add(disp, f"<repo:{pid}>")
 
     if concept_root is not None:
@@ -356,16 +312,11 @@ def collect_path_replacements(
 
     dedup: dict[str, str] = {}
     for raw, tok in sorted(pairs, key=lambda item: len(item[0]), reverse=True):
-        if raw not in dedup:
-            dedup[raw] = tok
+        dedup.setdefault(raw, tok)
     return list(dedup.items())
 
 
-def sanitize_markdown_paths(
-    text: str,
-    *,
-    replacements: list[tuple[str, str]] | None = None,
-) -> str:
+def sanitize_markdown_paths(text: str, *, replacements: list[tuple[str, str]] | None = None) -> str:
     """Masque les chemins absolus machine connus ou génériques dans un texte Markdown."""
     cleaned = text
     for raw_path, token in replacements or []:
@@ -375,53 +326,39 @@ def sanitize_markdown_paths(
 
 
 def resolve_workspace_root(
-    config_arg: Path | None = None,
-    workspace_arg: Path | None = None,
-    cwd: Path | None = None,
-    env: dict | None = None,
-    home_dir: Path | None = None,
+    config_arg: Path | None = None, workspace_arg: Path | None = None,
+    cwd: Path | None = None, env: dict | None = None, home_dir: Path | None = None,
 ) -> tuple[Path, Path]:
     """Résout `(concept_root, config_path)` par paramètres, env, auto-détection ou accueil centralisé."""
     if config_arg is not None:
         cfg_path = config_arg.expanduser().resolve()
         return cfg_path.parent, cfg_path
-
     if workspace_arg is not None:
         ws = workspace_arg.expanduser().resolve()
         return ws, ws / "projects.json"
 
     env_map = env if env is not None else os.environ
-    env_ws = str(env_map.get("GRAVITY_ARCHITECT_WORKSPACE") or "").strip()
-    if env_ws:
+    if env_ws := str(env_map.get("GRAVITY_ARCHITECT_WORKSPACE") or "").strip():
         ws = Path(env_ws).expanduser().resolve()
         return ws, ws / "projects.json"
 
     base_cwd = (cwd if cwd is not None else Path.cwd()).resolve()
-    direct_cfg = base_cwd / "projects.json"
-    if direct_cfg.is_file():
+    if (direct_cfg := base_cwd / "projects.json").is_file():
         return base_cwd, direct_cfg
 
-    candidates: list[Path] = []
-    for entry in sorted(base_cwd.iterdir(), key=lambda p: p.name.lower()):
-        if not entry.is_dir():
-            continue
-        if entry.name.startswith(".") or entry.name in AUTO_DISCOVER_SKIP_DIRS:
-            continue
-        if (entry / "projects.json").is_file() and (entry / "ECOSYSTEM.md").is_file():
-            candidates.append(entry)
-
+    candidates = [
+        entry for entry in sorted(base_cwd.iterdir(), key=lambda p: p.name.lower())
+        if entry.is_dir() and not entry.name.startswith(".") and entry.name not in AUTO_DISCOVER_SKIP_DIRS
+        and (entry / "projects.json").is_file() and (entry / "ECOSYSTEM.md").is_file()
+    ]
     if len(candidates) == 1:
         ws = candidates[0].resolve()
         return ws, ws / "projects.json"
     if len(candidates) > 1:
-        names = ", ".join(c.name for c in candidates)
-        raise ValueError(
-            f"Plusieurs ateliers détectés dans {base_cwd} ({names}) ; précisez --workspace."
-        )
+        raise ValueError(f"Plusieurs ateliers détectés dans {base_cwd} ({', '.join(c.name for c in candidates)}) ; précisez --workspace.")
 
     arch_home = default_architect_home(env=env_map, home_dir=home_dir)
-    arch_cfg = arch_home / "projects.json"
-    if arch_cfg.is_file():
+    if (arch_cfg := arch_home / "projects.json").is_file():
         return arch_home, arch_cfg
 
     raise FileNotFoundError(
@@ -443,26 +380,15 @@ def snapshot_watches_map(snapshot: dict | None) -> dict[str, dict]:
 
 def has_install_audit(snapshot: dict) -> bool:
     """Indique si au moins un projet du snapshot utilise le preset `antigravity-plugin`."""
-    return any(
-        p.get("preset") == "antigravity-plugin" for p in snapshot.get("projects") or []
-    )
+    return any(p.get("preset") == "antigravity-plugin" for p in snapshot.get("projects") or [])
 
 
-def run_readonly_cmd(
-    args: list[str],
-    cwd: Path | None = None,
-    timeout: int = 15,
-) -> tuple[int, str, str]:
+def run_readonly_cmd(args: list[str], cwd: Path | None = None, timeout: int = 15) -> tuple[int, str, str]:
     """Exécute une commande sans shell=True et retourne (returncode, stdout, stderr)."""
     try:
         proc = subprocess.run(
-            args,
-            cwd=str(cwd) if cwd is not None else None,
-            capture_output=True,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
-            timeout=timeout,
+            args, cwd=str(cwd) if cwd is not None else None, capture_output=True,
+            text=True, encoding="utf-8", errors="replace", timeout=timeout,
         )
         return proc.returncode, proc.stdout, proc.stderr
     except OSError as exc:
@@ -472,14 +398,27 @@ def run_readonly_cmd(
 
 
 MD_H1_RE = re.compile(r"^#\s+(.+?)\s*$", re.MULTILINE)
-STATUS_LINE_RE = re.compile(
-    r"^\s*-\s*\*\*(?:Date\s*/\s*)?Statut\s*:\*\*\s*(.+?)\s*$",
-    re.MULTILINE | re.IGNORECASE,
-)
-TARGET_LINE_RE = re.compile(
-    r"^\s*-\s*\*\*(?:Dépôt cible|Projets? impactés?)\s*:\*\*\s*(.+?)\s*$",
-    re.MULTILINE | re.IGNORECASE,
-)
+TASK_ID_RE = re.compile(r"^\s*-\s*\*\*Task\s+ID(?:\s*:\*\*|\*\*\s*:)\s*(.+?)\s*$", re.MULTILINE | re.IGNORECASE)
+SPEC_ID_RE = re.compile(r"^\s*-\s*\*\*(?:Spec\s+ID|ID\s+Spec)(?:\s*:\*\*|\*\*\s*:)\s*(.+?)\s*$", re.MULTILINE | re.IGNORECASE)
+SPEC_SOURCE_RE = re.compile(r"^\s*-\s*\*\*(?:Spec\s+source|Source\s+Spec|Sp[ée]cification\s+source)(?:\s*:\*\*|\*\*\s*:)\s*(.+?)\s*$", re.MULTILINE | re.IGNORECASE)
+AC_LINE_RE = re.compile(r"^\s*-\s*\*\*(?:Acceptance\s+Criteria(?:\s+Covered)?|Crit[èe]res?\s+d['’]acceptation(?:\s+couverts?)?)(?:\s*:\*\*|\*\*\s*:)\s*(.+?)\s*$", re.MULTILINE | re.IGNORECASE)
+WAVE_NAME_RE = re.compile(r"^\s*-\s*\*\*(?:Nom\s+de\s+vague|Wave\s+name)(?:\s*:\*\*|\*\*\s*:)\s*(.+?)\s*$", re.MULTILINE | re.IGNORECASE)
+STATUS_LINE_RE = re.compile(r"^\s*-\s*\*\*(?:(?:Date\s*/\s*)?(?:Statut|Status))(?:\s*:\*\*|\*\*\s*:)\s*(.+?)\s*$", re.MULTILINE | re.IGNORECASE)
+TARGET_LINE_RE = re.compile(r"^\s*-\s*\*\*(?:D[ée]p[ôo]t\s+cible|Target\s+(?:project|repo(?:sitory)?)|Projets?\s+impact[ée]s?|Impacted\s+projects?)(?:\s*:\*\*|\*\*\s*:)\s*(.+?)\s*$", re.MULTILINE | re.IGNORECASE)
+WAVE_LINE_RE = re.compile(r"^\s*-\s*\*\*(?:Vague|Wave)(?:\s*:\*\*|\*\*\s*:)\s*(.+?)\s*$", re.MULTILINE | re.IGNORECASE)
+DEPS_LINE_RE = re.compile(r"^\s*-\s*\*\*(?:D[ée]pendances|Dependencies)(?:\s*:\*\*|\*\*\s*:)\s*(.+?)\s*$", re.MULTILINE | re.IGNORECASE)
+BRANCH_LINE_RE = re.compile(r"^\s*-\s*\*\*(?:Branche\s+attendue|Expected\s+branch)(?:\s*:\*\*|\*\*\s*:)\s*(.+?)\s*$", re.MULTILINE | re.IGNORECASE)
+PROFILE_LINE_RE = re.compile(r"^\s*-\s*\*\*(?:Profil\s+workflow|Workflow\s+profile)(?:\s*:\*\*|\*\*\s*:)\s*(.+?)\s*$", re.MULTILINE | re.IGNORECASE)
+FILES_LINE_RE = re.compile(r"^\s*-\s*\*\*(?:Fichiers\s+cibles|Target\s+files)(?:\s*:\*\*|\*\*\s*:)\s*(.+?)\s*$", re.MULTILINE | re.IGNORECASE)
+ANCHORS_LINE_RE = re.compile(r"^\s*-\s*\*\*(?:Ancres(?:\s+exactes)?|Exact\s+anchors|Anchors)(?:\s*:\*\*|\*\*\s*:)\s*(.+?)\s*$", re.MULTILINE | re.IGNORECASE)
+ARTIFACT_FILE_SECTIONS = frozenset({
+    "ancres exactes", "ancres", "fichiers cibles", "fichiers probables",
+    "exact anchors", "anchors", "target files", "probable files",
+})
+ANCHOR_TAIL_RE = re.compile(r"(?:\s*::.*|\s*\(?~L\d+(?:-\s*L?\d+)?\)?.*)$")
+HYBRID_ANCHOR_RE = re.compile(r"::|~L\d+")
+EMPTY_FIELD_TOKENS = frozenset({"", "aucun", "aucune", "none", "n/a", "-", "—"})
+BARE_ROOT_FILES = frozenset({"Dockerfile", "Makefile", "LICENSE", "README"})
 
 
 def clean_md_field(raw: str) -> str:
@@ -493,11 +432,115 @@ def clean_md_field(raw: str) -> str:
     return text.strip("`* ").strip()
 
 
+def normalize_target_file(raw: str) -> str:
+    """Normalise un chemin cible en supprimant ancres `::...` / `~L...` et préfixe `./`."""
+    s = raw.strip().strip("`").strip()
+    if m := re.match(r"^\[([^\]]+)\]\([^)]+\)(.*)$", s):
+        s = m.group(1) + m.group(2)
+    s = ANCHOR_TAIL_RE.sub("", s).strip().replace("\\", "/")
+    while s.startswith("./"):
+        s = s[2:]
+    return s.rstrip("/")
+
+
+def _looks_like_file_path(head: str) -> bool:
+    return bool(head) and head.lower() not in EMPTY_FIELD_TOKENS and ("/" in head or "\\" in head or "." in head or head in BARE_ROOT_FILES)
+
+
+def _clean_bullet_item(raw: str) -> str:
+    s = re.split(r"\s+[—–]\s+|\s+--\s+", raw.strip(), maxsplit=1)[0].strip()
+    if m := re.match(r"^\[([^\]]+)\]\([^)]+\)(.*)$", s):
+        s = m.group(1) + m.group(2)
+    return re.sub(r"\*?\((?!~L)[^)]*\)\*?", "", s).replace("`", "").strip().strip(",;").strip()
+
+
+def _record_target_item(item: str, target_files: list[str], anchors: dict[str, list[str]]) -> str | None:
+    if not item or item.lower() in EMPTY_FIELD_TOKENS:
+        return None
+    norm = normalize_target_file(item)
+    if not _looks_like_file_path(norm):
+        return None
+    if norm not in target_files:
+        target_files.append(norm)
+    if HYBRID_ANCHOR_RE.search(item):
+        bucket = anchors.setdefault(norm, [])
+        if item not in bucket:
+            bucket.append(item)
+    return norm
+
+
+def _extract_targets_and_anchors(text: str) -> tuple[list[str], dict[str, list[str]]]:
+    target_files: list[str] = []
+    anchors: dict[str, list[str]] = {}
+    for rx in (FILES_LINE_RE, ANCHORS_LINE_RE):
+        for match in rx.finditer(text):
+            for part in re.split(r",(?![^(]*\))", match.group(1)):
+                _record_target_item(_clean_bullet_item(part), target_files, anchors)
+
+    section_kind: str | None = None
+    current_parent: str | None = None
+    for line in text.splitlines():
+        if h_match := re.match(r"^#{1,2}\s+(.+?)\s*$", line):
+            heading = h_match.group(1).strip().lower()
+            section_kind = heading if (line.startswith("## ") and heading in ARTIFACT_FILE_SECTIONS) else None
+            current_parent = None
+            continue
+        if section_kind is None:
+            continue
+        if b_match := re.match(r"^(\s*)[-*+]\s+(.+?)\s*$", line):
+            indent, item = len(b_match.group(1).expandtabs(2)), _clean_bullet_item(b_match.group(2))
+            if not item or item.lower() in EMPTY_FIELD_TOKENS:
+                continue
+            norm = normalize_target_file(item)
+            if indent >= 2 and current_parent and not _looks_like_file_path(norm):
+                if HYBRID_ANCHOR_RE.search(item) or section_kind in ("ancres exactes", "ancres", "exact anchors", "anchors"):
+                    sep = "" if item.startswith("::") else (" " if item.startswith(("~L", "(~L")) else "::")
+                    combined = f"{current_parent}{sep}{item}"
+                    bucket = anchors.setdefault(current_parent, [])
+                    if combined not in bucket:
+                        bucket.append(combined)
+            else:
+                recorded = _record_target_item(item, target_files, anchors)
+                if indent < 2:
+                    current_parent = recorded
+    return target_files, anchors
+
+
+def _clean_optional_field(pattern: re.Pattern[str], text: str) -> str:
+    val = clean_md_field(m.group(1)) if (m := pattern.search(text)) else ""
+    return "" if val.lower() in EMPTY_FIELD_TOKENS else val
+
+
+def _extract_spec_source(text: str) -> str:
+    if not (m := SPEC_SOURCE_RE.search(text)):
+        return ""
+    raw = m.group(1).strip()
+    if lm := re.search(r"\[[^\]]*\]\(([^)\s]+)\)", raw):
+        cand = lm.group(1).strip().strip("`")
+    else:
+        cand = clean_md_field(raw)
+    cand = cand.replace("\\", "/").strip()
+    while cand.startswith("./"):
+        cand = cand[2:]
+    return "" if cand.lower() in EMPTY_FIELD_TOKENS else cand
+
+
+def _extract_acceptance_criteria(text: str) -> list[str]:
+    if not (m := AC_LINE_RE.search(text)):
+        return []
+    raw = re.sub(r"\*?\([^)]*\)\*?", "", m.group(1)).strip()
+    out: list[str] = []
+    for part in re.split(r"[,;]", raw):
+        tok = part.strip("`* ").strip()
+        if tok and tok.lower() not in EMPTY_FIELD_TOKENS and tok not in out:
+            out.append(tok)
+    return out
+
+
 def parse_artifact_file(path: Path, concept_root: Path) -> dict:
-    """Extrait les métadonnées minimales d'une spec ou d'un handoff Markdown."""
+    """Extrait les métadonnées d'une spec ou d'une task Markdown."""
     text = path.read_text(encoding="utf-8", errors="replace")
     title_match = MD_H1_RE.search(text)
-    title = title_match.group(1).strip() if title_match else path.stem
     date_match = re.match(r"^(\d{4}-\d{2}-\d{2})-", path.name)
     status_match = STATUS_LINE_RE.search(text)
     target_match = TARGET_LINE_RE.search(text)
@@ -505,34 +548,69 @@ def parse_artifact_file(path: Path, concept_root: Path) -> dict:
     if target_match:
         raw_target = re.sub(r"\*?\([^)]*\)\*?", "", target_match.group(1)).strip()
         target_project = raw_target.replace("`", "").strip("* ").strip()
-    return {
+
+    wave, wave_raw = None, None
+    if wave_match := WAVE_LINE_RE.search(text):
+        raw_w = clean_md_field(wave_match.group(1))
+        if raw_w:
+            if re.fullmatch(r"-?\d+", raw_w):
+                wave = int(raw_w)
+            else:
+                wave_raw = raw_w
+
+    dependencies: list[str] = []
+    if deps_match := DEPS_LINE_RE.search(text):
+        raw_deps = re.sub(r"\[([^\]]+)\]\([^)]+\)", r"\1", deps_match.group(1))
+        raw_deps = re.sub(r"\*?\([^)]*\)\*?", "", raw_deps).strip()
+        for part in re.split(r"[,;]", raw_deps):
+            dep = part.strip("`* ").strip()
+            if dep.lower() in EMPTY_FIELD_TOKENS:
+                continue
+            dep = dep[:-3] if dep.endswith(".md") else dep
+            if dep and dep not in dependencies:
+                dependencies.append(dep)
+
+    target_files, anchors = _extract_targets_and_anchors(text)
+    out: dict = {
+        "id": path.stem,
         "filename": path.name,
         "rel_path": path.relative_to(concept_root).as_posix(),
-        "title": title,
+        "title": title_match.group(1).strip() if title_match else path.stem,
         "date": date_match.group(1) if date_match else None,
         "status": clean_md_field(status_match.group(1)) if status_match else "unknown",
         "target_project": target_project,
+        "expected_branch": _clean_optional_field(BRANCH_LINE_RE, text),
+        "wave": wave,
+        "dependencies": dependencies,
+        "workflow_profile": _clean_optional_field(PROFILE_LINE_RE, text),
+        "target_files": target_files,
+        "anchors": anchors,
+        "task_id": _clean_optional_field(TASK_ID_RE, text),
+        "spec_id": _clean_optional_field(SPEC_ID_RE, text),
+        "spec_source": _extract_spec_source(text),
+        "acceptance_criteria": _extract_acceptance_criteria(text),
+        "wave_name": _clean_optional_field(WAVE_NAME_RE, text),
     }
+    if wave_raw is not None:
+        out["wave_raw"] = wave_raw
+    return out
 
 
 def scan_md_dir(directory: Path, concept_root: Path) -> list[dict]:
     """Liste les fichiers Markdown d'un répertoire en ignorant les modèles `_*.md`."""
     if not directory.is_dir():
         return []
-    return [
-        parse_artifact_file(path, concept_root)
-        for path in sorted(directory.glob("*.md"), key=lambda p: p.name)
-        if not path.name.startswith("_")
-    ]
+    return [parse_artifact_file(p, concept_root) for p in sorted(directory.glob("*.md"), key=lambda x: x.name) if not p.name.startswith("_")]
 
 
 def collect_concept_artifacts(concept_root: Path) -> dict:
-    """Inventorie specs/, specs/archive/, handoffs/ et handoffs/archive/ sans les _TEMPLATE.md."""
-    specs_dir = concept_root / "specs"
-    handoffs_dir = concept_root / "handoffs"
+    """Inventorie specs/, specs/archive/, tasks/ et tasks/archive/ sans les _TEMPLATE.md."""
+    specs_dir, tasks_dir, handoffs_dir = concept_root / "specs", concept_root / "tasks", concept_root / "handoffs"
     return {
         "specs": scan_md_dir(specs_dir, concept_root),
         "archived_specs": scan_md_dir(specs_dir / "archive", concept_root),
+        "pending_tasks": scan_md_dir(tasks_dir, concept_root),
+        "archived_tasks": scan_md_dir(tasks_dir / "archive", concept_root),
         "pending_handoffs": scan_md_dir(handoffs_dir, concept_root),
         "archived_handoffs": scan_md_dir(handoffs_dir / "archive", concept_root),
     }

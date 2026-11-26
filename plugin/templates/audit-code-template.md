@@ -19,7 +19,7 @@
 
 ## 3. Invariants & contrats (`config/module.json`, `plugin.json`, séparation Hot / Cold)
 - **Manifeste & contrat module :** *Conformité des champs, du schéma et des commandes.*
-- **Séparation Hot / Cold & budgets :** *Respect de la lecture seule hors atelier, isolation et budgets tokens.*
+- **Séparation Hot / Cold & vagues (`tasks/`) :** *Respect de la lecture seule hors atelier, isolation, ancres hybrides (`<= 5` fichiers code) et budgets tokens.*
 
 ## 4. Sécurité, hygiène & tests (stdlib, UTF-8, LF)
 - **Dépendances & sûreté :** *100 % bibliothèque standard Python 3.10+, zéro `shell=True`, absence de secrets/fuites.*

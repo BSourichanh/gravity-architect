@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **[TASK-ARCH-01] Anti-drift guardrails, DAG/Spec validation & `AUD-05-09` (`SPEC-GOV-02`):**
+  - Ported and hardened `plugin/core/io_utils.py` (`<= 650` L) with bilingual FR/EN artifact headers, `TASK_ID_RE`, `SPEC_ID_RE`, `SPEC_SOURCE_RE`, `AC_LINE_RE`, `WAVE_NAME_RE`, `parse_artifact_file()` metadata extraction (`task_id`, `spec_id`, `spec_source`, `acceptance_criteria`, `wave_name`), and `tasks/` + temporary `handoffs/` collection in `collect_concept_artifacts()`.
+  - Ported and hardened `plugin/core/waves.py` (`<= 650` L): fail-closed DAG, `<= 5` code files, hybrid `::`/`~L` anchors, `atelier_id` / `workspace_root.name` self-workspace recognition without modifying `projects.json["projects"]`, fail-closed `Spec ID` / `Spec source` (`status == "validated"` inside `specs/`) / `Acceptance Criteria Covered` enforcement, and optional `wave_name` emission in `wave_plan_v1`.
+  - Ported `plugin/scripts/atelier_status.py` (`<= 650` L, strictly read-only, zero git subprocesses) with deterministic `AUD-05-09` stale/orphaned `ready` task detection (archived/superseded/missing spec, `task_id` in target `CHANGELOG.md`, `new file` anchors already present on disk).
+  - Ported `_TEMPLATE_DRIFT_PAIRS`, `extract_markdown_targets()`, `_iter_atelier_hygiene_files()`, and `collect_atelier_hygiene_alerts()` into `plugin/core/delta.py` (`<= 650` L).
+  - Aligned `plugin/templates/{spec,task,audit-code,project-card}-template.md` (LF, UTF-8 no-BOM) and added isolated unit suites `tests/test_waves.py` and `tests/test_hooks_and_status.py`.
+
 ## [0.5.1] - 2026-11-24
 
 ### Added
