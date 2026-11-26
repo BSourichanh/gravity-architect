@@ -26,5 +26,27 @@
       "upgrade-deltas"
     ],
     "consumes": []
+  },
+  "dashboard": {
+    "provider_script": "scripts/dashboard_provider.py",
+    "views": [
+      "architect"
+    ],
+    "actions": []
+  },
+  "capture_policy": {
+    "commands": [
+      "/gravity-architect"
+    ],
+    "exclude_subcommands": [
+      "init",
+      "add",
+      "sync",
+      "status",
+      "archive",
+      "audit"
+    ],
+    "consultative_bypass": true,
+    "label_prefix": "architect"
   }
 }
