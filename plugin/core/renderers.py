@@ -481,7 +481,7 @@ def _format_project_changelog_link(proj: dict, effective_public: bool) -> str:
     if not stable.get("has_changelog"):
         return "**Absent**"
     chg_rel = str(stable.get("changelog_path") or proj.get("changelog") or "CHANGELOG.md").replace("\\", "/").lstrip("/")
-    raw_path = str(proj.get("path") or "").replace("\\", "/").strip()
+    raw_path = str(proj.get("display_path") or proj.get("path") or "").replace("\\", "/").strip()
     if effective_public or not raw_path or raw_path.startswith("/") or (len(raw_path) >= 2 and raw_path[1] == ":"):
         return f"`{chg_rel}`"
     target = posixpath.normpath(f"../../{raw_path.rstrip('/')}/{chg_rel}")

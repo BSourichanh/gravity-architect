@@ -23,6 +23,7 @@ sys.path.insert(0, str(PLUGIN_ROOT))
 sys.path.insert(0, str(PLUGIN_SCRIPTS))
 
 from core import renderers  # noqa: E402
+import init_workspace  # noqa: E402
 import sync_tracking  # noqa: E402
 
 
@@ -1758,6 +1759,54 @@ class TestSyncTracking(unittest.TestCase):
         body_abs = renderers._build_project_card_meta_body(abs_proj, "2026-11-26", effective_public=False)
         self.assertIn("— `CHANGELOG.md`", body_abs)
         self.assertNotIn("/abs/path/demo", body_abs)
+
+        win_rel_proj = {**base_proj, "display_path": "..\\repo4", "path": "/abs/resolved/repo4"}
+        body_win_rel = renderers._build_project_card_meta_body(win_rel_proj, "2026-11-26", effective_public=False)
+        self.assertIn("[`CHANGELOG.md`](../../../repo4/CHANGELOG.md)", body_win_rel)
+
+        win_abs_proj = {**base_proj, "display_path": "C:\\abs\\repo4", "path": "C:\\abs\\repo4"}
+        body_win_abs = renderers._build_project_card_meta_body(win_abs_proj, "2026-11-26", effective_public=False)
+        self.assertIn("— `CHANGELOG.md`", body_win_abs)
+        self.assertNotIn("C:/abs/repo4", body_win_abs)
+
+    def test_e2e_init_workspace_run_sync_direct_changelog_links_and_public_mode(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            repo4 = root / "repo4"
+            _init_demo_repo(repo4)
+
+            ws_priv = root / "ws-priv"
+            init_workspace.init_workspace(
+                ws_priv,
+                name="Atelier Priv",
+                projects=[("repo4", "../repo4", repo4)],
+                public_mode=False,
+            )
+            snapshot_priv, _ = sync_tracking.run_sync(
+                config_path=ws_priv / "projects.json",
+                concept_root=ws_priv,
+                offline=True,
+            )
+            self.assertEqual(snapshot_priv["projects"][0]["display_path"], "../repo4")
+            self.assertEqual(snapshot_priv["projects"][0]["path"], str(repo4.resolve()))
+            card_priv = (ws_priv / "tracking" / "projects" / "repo4.md").read_text(encoding="utf-8")
+            self.assertIn("[`CHANGELOG.md`](../../../repo4/CHANGELOG.md)", card_priv)
+
+            ws_pub = root / "ws-pub"
+            init_workspace.init_workspace(
+                ws_pub,
+                name="Atelier Pub",
+                projects=[("repo4", "../repo4", repo4)],
+                public_mode=True,
+            )
+            sync_tracking.run_sync(
+                config_path=ws_pub / "projects.json",
+                concept_root=ws_pub,
+                offline=True,
+            )
+            card_pub = (ws_pub / "tracking" / "projects" / "repo4.md").read_text(encoding="utf-8")
+            self.assertIn("— `CHANGELOG.md`", card_pub)
+            self.assertNotIn("../../../repo4/CHANGELOG.md", card_pub)
 
 
 if __name__ == "__main__":
