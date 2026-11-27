@@ -18,7 +18,7 @@ gravity-architect/
 ├── CHANGELOG.md                     # Release history (Keep a Changelog / SemVer)
 ├── LICENSE                          # MIT License
 ├── README.md                        # Repository documentation
-├── install.py                       # Slim cross-platform installer/uninstaller (~70 L via _shared.installer_core)
+├── install.py                       # Slim cross-platform installer/uninstaller (~80 L via _shared.installer_core)
 ├── plugin/                          # Standalone Antigravity plugin
 │   ├── plugin.json                  # Official 9-field manifest
 │   ├── hooks.json                   # PreInvocation hook configuration (enabled: true)
@@ -90,7 +90,7 @@ python plugin/scripts/sync_tracking.py --workspace ./my-workshop --offline --ack
 Inside Antigravity, invoke `/gravity-architect` (0-token `PreInvocation` status) or `/gravity-architect [init|add|sync|status|spec|task|archive|audit]` (see [`plugin/README.md`](plugin/README.md) and [`plugin/skills/gravity-architect/references/workflows-and-hygiene.md`](plugin/skills/gravity-architect/references/workflows-and-hygiene.md)).
 
 ### Key Capabilities
-- **Shared Core & Slim Entrypoints:** `install.py` (~70 L) and `plugin/scripts/validate.py` (< 300 L) delegate to `plugin/_shared/` (`installer_core`, `validator_core`, `hook_runtime`), synchronized from `gravity/shared/gravity_shared/`.
+- **Shared Core & Slim Entrypoints:** `install.py` (~80 L) and `plugin/scripts/validate.py` (< 300 L) delegate to `plugin/_shared/` (`installer_core`, `validator_core`, `hook_runtime`), synchronized from `gravity/shared/gravity_shared/`.
 - **0-Token Bare `/gravity-architect` Hook:** `plugin/hooks.json` activates `hooks/pre_invocation_architect.py` (`PreInvocation`, `enabled: true`) backed by read-only `scripts/atelier_status.py` (`AUD-05-09` stale `ready` task detection).
 - **Anti-Drift Wave Planning (`core/waves.py`):** fail-closed DAG ordering, file-disjointness per wave, `<= 5` code files per task, hybrid `::`/`~L` anchors, `Spec ID`/`Spec source` (`status == "validated"`)/`Acceptance Criteria Covered` enforcement, `wave_plan_v1` export for native `/swarm` execution (with `run_workflow` available as explicit opt-in).
 - **Isolated Code Audits (`audits/code/`):** read-only Code & Architecture audits (`CODE-XX-N` `P0`/`P1`/`P2`) strictly separated from `audits/agents/`.
