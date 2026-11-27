@@ -1,7 +1,7 @@
 {
   "name": "gravity-architect",
   "displayName": "Gravity Architect",
-  "version": "0.5.1",
+  "version": "0.6.0",
   "description": "Generic Hot/Cold design workshop for architecture specs, wave tasks, code audits, and read-only multi-repo tracking in Antigravity.",
   "logo": "assets/logo.svg",
   "suggestedPrompts": [

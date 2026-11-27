@@ -7,23 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-11-27
+
 ### Added
 - **[TASK-ARCH-02a] Vue SPI-1 `health` & durcissements P1 (`SPEC-ARCH-02`):**
   - Ajout de la vue RO `get_health_view` (`--view health --json`) dans `plugin/scripts/dashboard_provider.py` et déclaration `"health"` dans `plugin/config/module.json::dashboard.views`, avec vérification `is_symlink_or_junction` et parité stricte `doctor.py` (`ateliers.json absent` / `0 atelier valide` / `N atelier(s) valide(s)`).
   - Ajout de `"scripts/dashboard_provider.py"` à `install.py::EXEC_SCRIPTS`.
   - Validation explicite de présence et d'unicité intra-lot de `Task ID` dans `plugin/core/waves.py::validate_waves` (`if spec_active:`).
-
-### Changed
-- **[TASK-DOC-02c] Nettoyage `handoff`, découplage templates & bascule `dev` (`SPEC-DOC-02`):**
-  - Remplacé les derniers reliquats `handoff`/`handoffs` par `task`/`tasks` dans `AGENTS.md`, `plugin/rules/AGENTS.md` (`510` octets `<= 513`) et `plugin/templates/impact-template.md`.
-  - Découplé `plugin/templates/spec-template.md` (`00-INDEX.md` retiré) et basculé `plugin/templates/task-template.md` (`refonte/socle` -> `dev`, exemple de dépendance générique) en parité exacte avec `gravity-workshop`.
-- **[TASK-ARCH-02a] Délégation `_shared` dans `io_utils.py` (`SPEC-ARCH-02`):**
-  - Délégation de `plugin/core/io_utils.py::write_utf8` vers `_shared.atomic_io.write_text_atomic` (`fsync`, retries verrou Windows, rejet symlink) et de `default_architect_home` vers `_shared.path_safety.safe_home_dir()`.
-- **[TASK-DOC-01c] Enrichissement pragmatique Hexagonal & DDD des gabarits Spec & Audit (`SPEC-DOC-01`):**
-  - Enrichi `plugin/templates/spec-template.md` (`## 4. Architecture retenue`) pour expliciter les frontières domaine / ports / adapteurs lorsque le domaine métier est riche ou multi-adapteurs, sans sur-ingénierie (KISS/YAGNI).
-  - Enrichi `plugin/templates/audit-code-template.md` (`## 2. Qualité d'ingénierie`) avec une 3e puce dédiée aux frontières domaine & découplage (Hexagonal / DDD pragmatique).
-
-### Added
 - **[TASK-ARCH-03b] `SPI-1` Dashboard Provider & `SPI-1`/`SPI-2` `module.json` Contract (`SPEC-ARCH-01`):**
   - Added read-only `plugin/scripts/dashboard_provider.py` (`< 550` L, mode `0755`, 100 % Python 3.10+ stdlib) implementing the `SPI-1` CLI (`--view architect --since-signature --atelier --ws --json`, stdin `params`/`context`, fail-closed `--action` `rc=1`), 8-level atelier discovery precedence (`arg_workspace` -> `selected_atelier` -> `env_workspace` -> `architect_home` -> `env_architect_home` -> `ws_hint` -> `architect_registry` -> `module_home`), bilingual FR/EN parsing across `ECOSYSTEM.md`, `delta.md`, `specs/`, `tasks/` (with RO fallback to `handoffs/` only when `tasks/` is absent), and `audits/code/` (strictly excluding `audits/agents/` and symlinks/NTFS junctions via `_shared.path_safety`), and `MAX_PAYLOAD_BYTES = 450_000` budget truncation.
   - Declared `dashboard` (`SPI-1`: `scripts/dashboard_provider.py`, `views: ["architect"]`, `actions: []`) and `capture_policy` (`SPI-2`: `/gravity-architect`, consultative subcommand exclusions, `consultative_bypass: true`, `label_prefix: "architect"`) in `plugin/config/module.json`.
@@ -46,6 +36,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Ported `plugin/scripts/atelier_status.py` (`<= 650` L, strictly read-only, zero git subprocesses) with deterministic `AUD-05-09` stale/orphaned `ready` task detection (archived/superseded/missing spec, `task_id` in target `CHANGELOG.md`, `new file` anchors already present on disk).
   - Ported `_TEMPLATE_DRIFT_PAIRS`, `extract_markdown_targets()`, `_iter_atelier_hygiene_files()`, and `collect_atelier_hygiene_alerts()` into `plugin/core/delta.py` (`<= 650` L).
   - Aligned `plugin/templates/{spec,task,audit-code,project-card}-template.md` (LF, UTF-8 no-BOM) and added isolated unit suites `tests/test_waves.py` and `tests/test_hooks_and_status.py`.
+
+### Changed
+- **[TASK-DOC-02c] Nettoyage `handoff`, découplage templates & bascule `dev` (`SPEC-DOC-02`):**
+  - Remplacé les derniers reliquats `handoff`/`handoffs` par `task`/`tasks` dans `AGENTS.md`, `plugin/rules/AGENTS.md` (`510` octets `<= 513`) et `plugin/templates/impact-template.md`.
+  - Découplé `plugin/templates/spec-template.md` (`00-INDEX.md` retiré) et basculé `plugin/templates/task-template.md` (`refonte/socle` -> `dev`, exemple de dépendance générique) en parité exacte avec `gravity-workshop`.
+- **[TASK-ARCH-02a] Délégation `_shared` dans `io_utils.py` (`SPEC-ARCH-02`):**
+  - Délégation de `plugin/core/io_utils.py::write_utf8` vers `_shared.atomic_io.write_text_atomic` (`fsync`, retries verrou Windows, rejet symlink) et de `default_architect_home` vers `_shared.path_safety.safe_home_dir()`.
+- **[TASK-DOC-01c] Enrichissement pragmatique Hexagonal & DDD des gabarits Spec & Audit (`SPEC-DOC-01`):**
+  - Enrichi `plugin/templates/spec-template.md` (`## 4. Architecture retenue`) pour expliciter les frontières domaine / ports / adapteurs lorsque le domaine métier est riche ou multi-adapteurs, sans sur-ingénierie (KISS/YAGNI).
+  - Enrichi `plugin/templates/audit-code-template.md` (`## 2. Qualité d'ingénierie`) avec une 3e puce dédiée aux frontières domaine & découplage (Hexagonal / DDD pragmatique).
 
 ## [0.5.1] - 2026-11-24
 
