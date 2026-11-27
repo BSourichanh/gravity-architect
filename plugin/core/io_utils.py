@@ -9,7 +9,13 @@ from pathlib import Path
 import re
 import subprocess
 import sys
-import tempfile
+
+PLUGIN_ROOT = Path(__file__).resolve().parent.parent
+if str(PLUGIN_ROOT) not in sys.path:
+    sys.path.insert(0, str(PLUGIN_ROOT))
+
+from _shared.atomic_io import write_text_atomic  # noqa: E402
+from _shared.path_safety import safe_home_dir  # noqa: E402
 
 SCHEMA_VERSION = 5
 
@@ -61,24 +67,7 @@ def configure_utf8_stdio() -> None:
 
 def write_utf8(path: Path, text: str) -> None:
     """Écrit un fichier texte de façon atomique en UTF-8 sans BOM avec fins de ligne LF."""
-    path.parent.mkdir(parents=True, exist_ok=True)
-    normalized = text.replace("\r\n", "\n")
-    tmp_path: Path | None = None
-    try:
-        with tempfile.NamedTemporaryFile(
-            mode="w", encoding="utf-8", newline="\n", dir=path.parent,
-            prefix=f".{path.name}.", suffix=".tmp", delete=False,
-        ) as fh:
-            tmp_path = Path(fh.name)
-            fh.write(normalized)
-        os.replace(tmp_path, path)
-    except Exception:
-        if tmp_path is not None:
-            try:
-                tmp_path.unlink(missing_ok=True)
-            except OSError:
-                pass
-        raise
+    write_text_atomic(path, text)
 
 
 def deploy_file(dst: Path, content: str, *, force: bool) -> str:
@@ -201,7 +190,7 @@ def default_architect_home(
     gravity_env = str(env_map.get("GRAVITY_HOME") or "").strip()
     if gravity_env:
         return (Path(gravity_env).expanduser().resolve() / "architect").resolve()
-    base_home = (home_dir if home_dir is not None else Path.home()).expanduser().resolve()
+    base_home = (home_dir if home_dir is not None else safe_home_dir()).expanduser().resolve()
     return (base_home / ".gemini" / "gravity" / "architect").resolve()
 
 

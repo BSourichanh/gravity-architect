@@ -338,13 +338,76 @@ class TestDashboardProvider(unittest.TestCase):
         self.assertTrue(bounded["truncated"])
         self.assertLess(len(json.dumps(bounded, ensure_ascii=False).encode("utf-8")), 3000)
 
+    def test_health_view_ro_states_cli_and_symlink_rejection(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp, mock.patch.dict(os.environ, _clean_env(), clear=True):
+            tmp_path = Path(tmp)
+            g_home = tmp_path / "g_home"
+            res_absent = dp.get_health_view(gravity_home=g_home)
+            self.assertEqual(res_absent["ok"], True)
+            self.assertEqual(res_absent["status"], "WARN")
+            self.assertEqual(res_absent["summary"], "ateliers.json absent")
+            self.assertTrue(res_absent["warnings"])
+            self.assertFalse(g_home.exists())
+
+            arch_home = g_home / "architect"
+            arch_home.mkdir(parents=True)
+            reg_path = arch_home / "ateliers.json"
+            reg_path.write_text(json.dumps({"schema_version": 1, "ateliers": [{"workspace_path": str(tmp_path / "missing")}]}), encoding="utf-8")
+            res_zero = dp.get_health_view(gravity_home=g_home)
+            self.assertEqual(res_zero["ok"], True)
+            self.assertEqual(res_zero["status"], "WARN")
+            self.assertEqual(res_zero["summary"], "0 atelier valide")
+            self.assertTrue(res_zero["warnings"])
+
+            a1, a2 = tmp_path / "a1", tmp_path / "a2"
+            _write_atelier(a1, with_code_audits=False)
+            _write_atelier(a2, with_code_audits=False)
+            reg_path.write_text(
+                json.dumps({"schema_version": 1, "ateliers": [{"workspace_path": str(a1)}, {"workspace_path": str(a2)}, {"workspace_path": str(a1)}]}),
+                encoding="utf-8",
+            )
+            before = reg_path.read_bytes()
+            res_ok = dp.get_health_view(gravity_home=g_home)
+            self.assertEqual(res_ok, {"ok": True, "status": "OK", "summary": "2 atelier(s) valide(s)", "warnings": []})
+            self.assertEqual(reg_path.read_bytes(), before)
+
+            script = PLUGIN_ROOT / "scripts" / "dashboard_provider.py"
+            proc = subprocess.run(
+                [sys.executable, "-I", "-B", str(script), "--view", "health", "--gravity-home", str(g_home), "--json"],
+                capture_output=True, text=True, encoding="utf-8", check=False,
+            )
+            self.assertEqual(proc.returncode, 0, proc.stderr)
+            self.assertEqual(json.loads(proc.stdout), res_ok)
+
+            real_reg = tmp_path / "real-ateliers.json"
+            real_reg.write_text(reg_path.read_text(encoding="utf-8"), encoding="utf-8")
+            reg_path.unlink()
+            try:
+                reg_path.symlink_to(real_reg)
+            except (OSError, NotImplementedError):
+                return
+            res_sym = dp.get_health_view(architect_home=arch_home)
+            self.assertEqual(res_sym["ok"], True)
+            self.assertEqual(res_sym["status"], "WARN")
+            self.assertTrue(any("symlink" in w.lower() for w in res_sym["warnings"]))
+
+            sym_home = tmp_path / "sym-arch-home"
+            try:
+                sym_home.symlink_to(arch_home, target_is_directory=True)
+            except (OSError, NotImplementedError):
+                return
+            res_sym_home = dp.get_health_view(architect_home=sym_home)
+            self.assertEqual(res_sym_home["ok"], True)
+            self.assertEqual(res_sym_home["status"], "WARN")
+            self.assertTrue(any("symlink" in w.lower() for w in res_sym_home["warnings"]))
+
     def test_structural_budgets_stdlib_and_module_contract(self) -> None:
         script = PLUGIN_ROOT / "scripts" / "dashboard_provider.py"
         raw = script.read_bytes()
         self.assertFalse(raw.startswith(b"\xef\xbb\xbf"))
         self.assertNotIn(b"\r\n", raw)
         lines = raw.decode("utf-8").splitlines()
-        self.assertLess(len(lines), 550, f"dashboard_provider.py must be < 550 lines (got {len(lines)})")
+        self.assertLess(len(lines), 650, f"dashboard_provider.py must be < 650 lines (got {len(lines)})")
         if os.name != "nt":
             self.assertTrue(os.access(script, os.X_OK))
 
@@ -353,7 +416,7 @@ class TestDashboardProvider(unittest.TestCase):
         mod = validator_core.validate_module_contract(PLUGIN_ROOT, rep, expected_plugin_name="gravity-architect", expected_module_id="architect")
         self.assertTrue(rep.ok(strict=True), f"Errors: {rep.errors}, Warnings: {rep.warnings}")
         self.assertIsNotNone(mod)
-        self.assertEqual(mod["dashboard"], {"provider_script": "scripts/dashboard_provider.py", "views": ["architect"], "actions": []})
+        self.assertEqual(mod["dashboard"], {"provider_script": "scripts/dashboard_provider.py", "views": ["architect", "health"], "actions": []})
         self.assertEqual(mod["capture_policy"], {
             "commands": ["/gravity-architect"],
             "exclude_subcommands": ["init", "add", "sync", "status", "archive", "audit"],

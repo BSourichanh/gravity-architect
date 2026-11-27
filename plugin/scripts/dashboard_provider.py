@@ -495,10 +495,33 @@ def get_architect_view(
     return _enforce_payload_budget(base_payload, ("audits", "tasks", "specs", "projects", "ateliers"))
 
 
+def get_health_view(*, gravity_home: Optional[Path] = None, architect_home: Optional[Path] = None) -> dict[str, Any]:
+    """Return read-only SPI-1 health status for Gravity Architect."""
+    warnings: list[str] = []
+    arch_home = _resolve_raw_architect_home(gravity_home=gravity_home, architect_home=architect_home)
+    reg_path = arch_home / ATELIERS_REGISTRY_FILENAME
+    if (gravity_home is not None and is_symlink_or_junction(Path(gravity_home).expanduser())) or is_symlink_or_junction(arch_home) or is_symlink_or_junction(reg_path):
+        warnings.append(f"Ignored symlinked or junction ateliers registry: {reg_path}.")
+        return {"ok": True, "status": "WARN", "summary": "ateliers.json absent", "warnings": warnings}
+    if not reg_path.is_file():
+        return {
+            "ok": True,
+            "status": "WARN",
+            "summary": "ateliers.json absent",
+            "warnings": [f"Module 'architect' actif mais {reg_path} absent : lancez /gravity-architect init ou /gravity-architect sync dans votre atelier."],
+        }
+    ateliers = _load_registered_ateliers_ro(reg_path, warnings)
+    if not ateliers:
+        if not warnings:
+            warnings.append(f"Module 'architect' actif mais {reg_path} ne contient aucun atelier valide : lancez /gravity-architect init ou /gravity-architect sync.")
+        return {"ok": True, "status": "WARN", "summary": "0 atelier valide", "warnings": warnings}
+    return {"ok": True, "status": "OK", "summary": f"{len(ateliers)} atelier(s) valide(s)", "warnings": warnings}
+
+
 def main(argv: Optional[list[str]] = None) -> int:
     configure_utf8_stdio()
     p = argparse.ArgumentParser(description="Read-only SPI-1 Gravity Architect dashboard provider.")
-    p.add_argument("--view", choices=("architect",), default="architect")
+    p.add_argument("--view", choices=("architect", "health"), default="architect")
     p.add_argument("--since-signature", default="")
     p.add_argument("--atelier", default="")
     p.add_argument("--ws", default="")
@@ -522,14 +545,19 @@ def main(argv: Optional[list[str]] = None) -> int:
         pass
     def _opt(v: Any) -> Optional[Path]:
         return v if isinstance(v, Path) else (Path(v.strip()) if isinstance(v, str) and v.strip() else None)
-    payload = get_architect_view(
-        since_signature=args.since_signature or str(params.get("since_signature") or ""),
-        atelier=args.atelier or str(params.get("atelier") or ""),
-        ws=args.ws or str(params.get("ws") or ctx.get("ws") or ""),
-        gravity_home=args.gravity_home or _opt(ctx.get("gravity_home")),
-        architect_home=args.architect_home or _opt(ctx.get("architect_home")),
-        architect_workspace=args.architect_workspace or _opt(ctx.get("architect_workspace")),
-    )
+    gravity_home = args.gravity_home or _opt(ctx.get("gravity_home"))
+    architect_home = args.architect_home or _opt(ctx.get("architect_home"))
+    if args.view == "health":
+        payload = get_health_view(gravity_home=gravity_home, architect_home=architect_home)
+    else:
+        payload = get_architect_view(
+            since_signature=args.since_signature or str(params.get("since_signature") or ""),
+            atelier=args.atelier or str(params.get("atelier") or ""),
+            ws=args.ws or str(params.get("ws") or ctx.get("ws") or ""),
+            gravity_home=gravity_home,
+            architect_home=architect_home,
+            architect_workspace=args.architect_workspace or _opt(ctx.get("architect_workspace")),
+        )
     sys.stdout.write(json.dumps(payload, indent=None if args.json else 2, ensure_ascii=False) + "\n")
     return 0
 

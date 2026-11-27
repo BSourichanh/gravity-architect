@@ -7,7 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **[TASK-ARCH-02a] Vue SPI-1 `health` & durcissements P1 (`SPEC-ARCH-02`):**
+  - Ajout de la vue RO `get_health_view` (`--view health --json`) dans `plugin/scripts/dashboard_provider.py` et déclaration `"health"` dans `plugin/config/module.json::dashboard.views`, avec vérification `is_symlink_or_junction` et parité stricte `doctor.py` (`ateliers.json absent` / `0 atelier valide` / `N atelier(s) valide(s)`).
+  - Ajout de `"scripts/dashboard_provider.py"` à `install.py::EXEC_SCRIPTS`.
+  - Validation explicite de présence et d'unicité intra-lot de `Task ID` dans `plugin/core/waves.py::validate_waves` (`if spec_active:`).
+
 ### Changed
+- **[TASK-ARCH-02a] Délégation `_shared` dans `io_utils.py` (`SPEC-ARCH-02`):**
+  - Délégation de `plugin/core/io_utils.py::write_utf8` vers `_shared.atomic_io.write_text_atomic` (`fsync`, retries verrou Windows, rejet symlink) et de `default_architect_home` vers `_shared.path_safety.safe_home_dir()`.
 - **[TASK-DOC-01c] Enrichissement pragmatique Hexagonal & DDD des gabarits Spec & Audit (`SPEC-DOC-01`):**
   - Enrichi `plugin/templates/spec-template.md` (`## 4. Architecture retenue`) pour expliciter les frontières domaine / ports / adapteurs lorsque le domaine métier est riche ou multi-adapteurs, sans sur-ingénierie (KISS/YAGNI).
   - Enrichi `plugin/templates/audit-code-template.md` (`## 2. Qualité d'ingénierie`) avec une 3e puce dédiée aux frontières domaine & découplage (Hexagonal / DDD pragmatique).

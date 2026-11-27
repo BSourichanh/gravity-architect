@@ -8,6 +8,7 @@ from pathlib import Path
 import sys
 import tempfile
 import unittest
+from unittest import mock
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 PLUGIN_ROOT = REPO_ROOT / "plugin"
@@ -95,7 +96,20 @@ class TestCoreStructureAndFacades(unittest.TestCase):
             self.assertTrue(hasattr(init_workspace, name), f"init_workspace.{name} manquant")
 
     def test_atomic_write_utf8_and_installer_copies_core(self) -> None:
+        from core import io_utils
         from core.io_utils import write_utf8
+
+        self.assertIn("scripts/dashboard_provider.py", install.EXEC_SCRIPTS)
+        with mock.patch.object(io_utils, "write_text_atomic", wraps=io_utils.write_text_atomic) as spy_write, mock.patch.object(
+            io_utils, "safe_home_dir", return_value=Path("/tmp/safe-home")
+        ) as spy_home:
+            self.assertEqual(io_utils.default_architect_home(env={}), (Path("/tmp/safe-home") / ".gemini" / "gravity" / "architect").resolve())
+            spy_home.assert_called_once()
+            with tempfile.TemporaryDirectory() as tmp:
+                tmp_path = Path(tmp)
+                out_file = tmp_path / "nested" / "sample.md"
+                write_utf8(out_file, "# Titre\r\nLigne 2\r\n")
+                spy_write.assert_called_once_with(out_file, "# Titre\r\nLigne 2\r\n")
 
         with tempfile.TemporaryDirectory() as tmp:
             tmp_path = Path(tmp)
@@ -108,6 +122,15 @@ class TestCoreStructureAndFacades(unittest.TestCase):
             leftovers = [p for p in out_file.parent.iterdir() if p.name.endswith(".tmp")]
             self.assertEqual(leftovers, [])
 
+            sym_target = tmp_path / "sym.md"
+            try:
+                sym_target.symlink_to(out_file)
+            except (OSError, NotImplementedError):
+                pass
+            else:
+                with self.assertRaises(ValueError):
+                    write_utf8(sym_target, "blocked\n")
+
             target = tmp_path / "installed-plugin"
             rc = install.main(["--target", str(target)])
             self.assertEqual(rc, 0)
@@ -118,6 +141,7 @@ class TestCoreStructureAndFacades(unittest.TestCase):
                 "hooks.json",
                 "hooks/pre_invocation_architect.py",
                 "scripts/atelier_status.py",
+                "scripts/dashboard_provider.py",
                 "_shared/atomic_io.py",
                 "_shared/file_lock.py",
                 "_shared/path_safety.py",

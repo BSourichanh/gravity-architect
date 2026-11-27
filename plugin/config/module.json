@@ -30,7 +30,8 @@
   "dashboard": {
     "provider_script": "scripts/dashboard_provider.py",
     "views": [
-      "architect"
+      "architect",
+      "health"
     ],
     "actions": []
   },

@@ -20,6 +20,7 @@ from _shared import installer_core  # noqa: E402
 EXEC_SCRIPTS: tuple[str, ...] = (
     "hooks/pre_invocation_architect.py",
     "scripts/atelier_status.py",
+    "scripts/dashboard_provider.py",
     "scripts/sync_tracking.py",
     "scripts/init_workspace.py",
     "scripts/validate.py",

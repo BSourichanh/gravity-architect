@@ -259,6 +259,7 @@ def validate_waves(
     waves_grouped: dict[int, list[str]] = {}
     wave_project_owner: dict[tuple[int, str], str] = {}
     wave_file_owner: dict[tuple[int, str, str], str] = {}
+    seen_task_ids: dict[str, str] = {}
 
     for idx, task in enumerate(tasks):
         if not isinstance(task, dict):
@@ -339,6 +340,15 @@ def validate_waves(
             )
 
         if spec_active:
+            task_id_val = str(task.get("task_id") or "").strip()
+            if not task_id_val:
+                errors.append(f"Task `{tid}` : `Task ID` manquant.")
+            elif task_id_val in seen_task_ids:
+                errors.append(
+                    f"Task `{tid}` : `Task ID` dupliqué (`{task_id_val}`, déjà utilisé par `{seen_task_ids[task_id_val]}`)."
+                )
+            else:
+                seen_task_ids[task_id_val] = tid
             task_spec_id = str(task.get("spec_id") or "").strip()
             if not task_spec_id:
                 errors.append(f"Task `{tid}` : `Spec ID` manquant.")

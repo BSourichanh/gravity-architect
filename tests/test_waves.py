@@ -20,6 +20,7 @@ from core import io_utils, waves  # noqa: E402
 def _make_task(
     tid: str,
     *,
+    task_id: str | None = None,
     wave: int | str | bool | None = 1,
     target_project: str = "alpha",
     expected_branch: str = "",
@@ -35,6 +36,7 @@ def _make_task(
 ) -> dict:
     out: dict = {
         "id": tid,
+        "task_id": tid if task_id is None else task_id,
         "filename": f"{tid}.md",
         "title": f"Task {tid}",
         "status": status,
@@ -491,6 +493,7 @@ class TestWavesValidation(unittest.TestCase):
             self.assertTrue(ok_res["ok"], ok_res["errors"])
 
             bad_cases = [
+                ("missing Task ID", _make_task("b0", task_id="", spec_id="SPEC-VAL-01", spec_source="specs/2026-11-26-valid.md", acceptance_criteria=["AC-1"]), "`Task ID` manquant"),
                 ("missing Spec ID", _make_task("b1", spec_source="specs/2026-11-26-valid.md", acceptance_criteria=["AC-1"]), "`Spec ID` manquant"),
                 ("missing Spec source", _make_task("b2", spec_id="SPEC-VAL-01", acceptance_criteria=["AC-1"]), "`Spec source` manquant"),
                 ("non-existent spec", _make_task("b3", spec_id="SPEC-VAL-01", spec_source="specs/nope.md", acceptance_criteria=["AC-1"]), "introuvable ou archivée"),
@@ -504,6 +507,14 @@ class TestWavesValidation(unittest.TestCase):
                 res = waves.validate_waves([bad_task], workspace_root=ws)
                 self.assertFalse(res["ok"], f"{label} should fail")
                 self.assertTrue(any(expected_msg in e for e in res["errors"]), f"{label}: {res['errors']}")
+
+            dup_tasks = [
+                _make_task("dup1", task_id="TASK-DUP", wave=1, target_project="alpha", spec_id="SPEC-VAL-01", spec_source="specs/2026-11-26-valid.md", acceptance_criteria=["AC-1"]),
+                _make_task("dup2", task_id="TASK-DUP", wave=2, target_project="alpha", spec_id="SPEC-VAL-01", spec_source="specs/2026-11-26-valid.md", acceptance_criteria=["AC-2"]),
+            ]
+            res_dup = waves.validate_waves(dup_tasks, workspace_root=ws)
+            self.assertFalse(res_dup["ok"])
+            self.assertTrue(any("`Task ID` dupliqué" in e and "TASK-DUP" in e for e in res_dup["errors"]), res_dup["errors"])
 
             # Explicit require_spec=True fails even without specs_dir
             res_forced = waves.validate_waves([_make_task("b9")], require_spec=True)
