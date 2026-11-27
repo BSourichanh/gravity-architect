@@ -278,7 +278,8 @@ def _compute_single_watch_delta(
         else:
             new_releases = [v for v in curr_versions if v not in prev_versions]
 
-        titles, digests = sinfo.get("release_titles") or {}, sinfo.get("release_digests") or {}
+        titles = sinfo.get("release_titles") or {}
+        digests = sinfo.get("release_digests") or {}
         w_surf_deltas[slug] = {
             "heading": sinfo.get("heading", slug), "latest_version": sinfo.get("latest_version"),
             "new_releases": [{"version": v, "title": titles.get(v, ""), "digest": digests.get(v, [])} for v in new_releases],
@@ -287,7 +288,8 @@ def _compute_single_watch_delta(
             any_new = True
 
     missing_impact = bool(impact_rel and winfo.get("fetch_status") == "ok" and not (concept_root / impact_rel).is_file())
-    target_out, pending_out = None, None
+    target_out: str | None = None
+    pending_out: dict | None = None
     if impact_rel and not w_acked and (any_new or missing_impact):
         target_out = impact_rel
         trig_w_sha = pending_w["prose_sha256_at_trigger"] if pending_w is not None else curr_imp_prose
@@ -329,12 +331,8 @@ def compute_delta_with_state(
         base_watches = {"antigravity": base_state["antigravity"]}
     base_pending = (base_state or {}).get("pending_editorial") or {}
 
-    next_projects: dict[str, dict] = {}
-    next_watches: dict[str, dict] = {}
-    next_pending: dict[str, dict] = {}
-    hygiene_alerts: list[str] = []
-    editorial_targets: list[str] = []
-    project_deltas: dict[str, dict] = {}
+    next_projects, next_watches, next_pending = {}, {}, {}
+    hygiene_alerts, editorial_targets, project_deltas = [], [], {}
 
     for proj in curr_snapshot["projects"]:
         pid = proj["id"]
@@ -374,9 +372,7 @@ def compute_delta_with_state(
     if has_install_audit(curr_snapshot):
         orphan_dirs = visible_orphan_plugin_dirs(curr_snapshot, effective_public)
         if orphan_dirs:
-            hygiene_alerts.append(
-                f"Plugins locaux : dossier(s) sans `plugin.json` ({', '.join(f'`{d}`' for d in orphan_dirs)})."
-            )
+            hygiene_alerts.append(f"Plugins locaux : dossier(s) sans `plugin.json` ({', '.join(f'`{d}`' for d in orphan_dirs)}).")
 
     if effective_public:
         mask_pairs = replacements if replacements is not None else collect_path_replacements(curr_snapshot, concept_root=concept_root)
@@ -384,26 +380,17 @@ def compute_delta_with_state(
 
     ag_watch = watch_deltas.get("antigravity") or {}
     fetch_status_summary = (
-        ag_watch.get("fetch_status")
-        if ag_watch
+        ag_watch.get("fetch_status") if ag_watch
         else (next(iter(watch_deltas.values())).get("fetch_status") if watch_deltas else "none")
     )
-
     delta_payload = {
-        "schema_version": SCHEMA_VERSION,
-        "synced_at": curr_snapshot["synced_at"],
-        "public_mode": effective_public,
-        "fetch_status": fetch_status_summary,
-        "needs_editorial_update": len(editorial_targets) > 0,
-        "editorial_targets": editorial_targets,
-        "hygiene_alerts": hygiene_alerts,
-        "auto_updated_files": [],
-        "projects": project_deltas,
-        "watches": watch_deltas,
-        "antigravity": ag_watch.get("surfaces", {}),
+        "schema_version": SCHEMA_VERSION, "synced_at": curr_snapshot["synced_at"],
+        "public_mode": effective_public, "fetch_status": fetch_status_summary,
+        "needs_editorial_update": len(editorial_targets) > 0, "editorial_targets": editorial_targets,
+        "hygiene_alerts": hygiene_alerts, "auto_updated_files": [], "projects": project_deltas,
+        "watches": watch_deltas, "antigravity": ag_watch.get("surfaces", {}),
         "artifacts": curr_snapshot.get("artifacts") or {},
     }
-
     any_project_auto_acked = any(
         base_pending.get(f"tracking/projects/{p['id']}.md") is not None
         and editorial_prose_sha256(concept_root / f"tracking/projects/{p['id']}.md")
@@ -416,11 +403,8 @@ def compute_delta_with_state(
         else curr_snapshot["synced_at"]
     )
     next_editorial_state = {
-        "schema_version": SCHEMA_VERSION,
-        "acked_at": acked_ts,
-        "projects": next_projects,
-        "watches": next_watches,
-        "pending_editorial": next_pending,
+        "schema_version": SCHEMA_VERSION, "acked_at": acked_ts,
+        "projects": next_projects, "watches": next_watches, "pending_editorial": next_pending,
     }
     return delta_payload, next_editorial_state
 
@@ -431,14 +415,21 @@ def compute_delta(
 ) -> dict:
     """Calcule le micro-delta entre le snapshot précédent et le snapshot courant."""
     delta, _ = compute_delta_with_state(
-        prev_snapshot=prev_snapshot, curr_snapshot=curr_snapshot, concept_root=concept_root,
-        editorial_state=editorial_state, ack_editorial=ack_editorial, public_mode=public_mode,
+        prev_snapshot=prev_snapshot,
+        curr_snapshot=curr_snapshot,
+        concept_root=concept_root,
+        editorial_state=editorial_state,
+        ack_editorial=ack_editorial,
+        public_mode=public_mode,
     )
     return delta
 
 
 def evaluate_hot_budgets(
-    concept_root: Path, budgets_cfg: dict | None, project_ids: list[str], watch_impact_files: list[str] | None = None,
+    concept_root: Path,
+    budgets_cfg: dict | None,
+    project_ids: list[str],
+    watch_impact_files: list[str] | None = None,
 ) -> dict[str, dict]:
     """Vérifie que les fichiers Hot ne dépassent pas leur budget en octets."""
     merged = dict(DEFAULT_HOT_BUDGETS)
@@ -456,7 +447,8 @@ def evaluate_hot_budgets(
     for rel_path in static_files:
         fpath = concept_root / rel_path
         if fpath.is_file():
-            size, limit = fpath.stat().st_size, int(merged.get(rel_path, 6000))
+            size = fpath.stat().st_size
+            limit = int(merged.get(rel_path, 6000))
             report[rel_path] = {"bytes": size, "budget": limit, "over_budget": size > limit}
 
     card_limit = int(merged.get("project_card_max_bytes", 3500))

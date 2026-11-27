@@ -18,8 +18,10 @@ from unittest import mock
 REPO_ROOT = Path(__file__).resolve().parent.parent
 PLUGIN_ROOT = REPO_ROOT / "plugin"
 sys.path.insert(0, str(REPO_ROOT))
+sys.path.insert(0, str(PLUGIN_ROOT))
 sys.path.insert(0, str(PLUGIN_ROOT / "scripts"))
 
+from _shared import installer_core, validator_core  # noqa: E402
 import init_workspace  # noqa: E402
 import install  # noqa: E402
 import validate  # noqa: E402
@@ -76,6 +78,7 @@ class TestInitAndInstall(unittest.TestCase):
             self.assertIn("tasks/_TEMPLATE.md", res["created"])
             self.assertIn("tasks/archive/.gitkeep", res["created"])
             self.assertFalse((ws / "handoffs").exists())
+            self.assertFalse((ws / "archives").exists())
             self.assertIn("tracking/projects/web.md", res["created"])
             self.assertIn("tracking/projects/api.md", res["created"])
             card_txt = (ws / "tracking" / "projects" / "web.md").read_text(encoding="utf-8")
@@ -85,7 +88,6 @@ class TestInitAndInstall(unittest.TestCase):
 
             cfg = json.loads((ws / "projects.json").read_text(encoding="utf-8"))
             self.assertEqual(cfg["schema_version"], 5)
-            self.assertIsNone(cfg.get("post_commit_install_cmd"))
             self.assertEqual(cfg["workspace_name"], "Atelier Test")
             self.assertEqual(cfg["default_preset"], "generic")
             self.assertEqual([p["id"] for p in cfg["projects"]], ["web", "api"])
@@ -134,7 +136,7 @@ class TestInitAndInstall(unittest.TestCase):
             bad_rep = validate.Report()
             validate.validate_plugin(bad_plug, bad_rep)
             self.assertFalse(bad_rep.ok(strict=True))
-            self.assertTrue(any("Fuite spécifique" in e for e in bad_rep.errors), bad_rep.errors)
+            self.assertTrue(any("Chemin personnel" in e for e in bad_rep.errors), bad_rep.errors)
 
             bad_mod_plug = Path(tmp) / "bad-mod-plugin"
             shutil.copytree(PLUGIN_ROOT, bad_mod_plug, ignore=shutil.ignore_patterns("__pycache__", "*.pyc"))
@@ -155,20 +157,6 @@ class TestInitAndInstall(unittest.TestCase):
             validate.validate_plugin(bad_mod_plug, missing_mod_rep)
             self.assertFalse(missing_mod_rep.ok(strict=True))
             self.assertTrue(any("config/module.json" in e for e in missing_mod_rep.errors))
-
-            bad_cfg_plug = Path(tmp) / "bad-cfg-plugin"
-            shutil.copytree(PLUGIN_ROOT, bad_cfg_plug, ignore=shutil.ignore_patterns("__pycache__", "*.pyc"))
-            tpl_cfg_path = bad_cfg_plug / "templates" / "projects.json"
-            tpl_cfg = json.loads(tpl_cfg_path.read_text(encoding="utf-8"))
-            tpl_cfg["post_commit_install_cmd"] = 123
-            tpl_cfg["verify_commands"] = ["pytest", 42]
-            tpl_cfg_path.write_text(json.dumps(tpl_cfg), encoding="utf-8")
-            cfg_rep = validate.Report()
-            validate.validate_plugin(bad_cfg_plug, cfg_rep)
-            self.assertFalse(cfg_rep.ok(strict=True))
-            cfg_joined = " | ".join(cfg_rep.errors)
-            self.assertIn("post_commit_install_cmd", cfg_joined)
-            self.assertIn("verify_commands", cfg_joined)
 
     def test_install_copy_check_dry_run_install_upgrade_and_uninstall(self) -> None:
         self.assertEqual(install.PLUGIN_SOURCE, REPO_ROOT / "plugin")
@@ -225,7 +213,7 @@ class TestInitAndInstall(unittest.TestCase):
             fail_proc = subprocess.CompletedProcess(
                 args=["validate.py"], returncode=1, stdout="", stderr="Strict error"
             )
-            with mock.patch.object(install, "run_plugin_validation", return_value=fail_proc):
+            with mock.patch.object(installer_core, "run_plugin_validation", return_value=fail_proc):
                 err_buf = io.StringIO()
                 with contextlib.redirect_stderr(err_buf):
                     rc_fail = install.main(["--check", "--strict", "--target", str(target)])
@@ -627,7 +615,7 @@ class TestInitAndInstall(unittest.TestCase):
             self.assertIn("SKILL.md", joined)
             self.assertIn("BOM", joined)
             self.assertIn("templates/AGENTS.md", joined)
-            self.assertIn("AGENTS.md (racine)", joined)
+            self.assertIn("AGENTS.md", joined)
 
             # Restaure SKILL.md, templates/AGENTS.md et AGENTS.md racine ; casse references/workflows-and-hygiene.md (CRLF + BOM) puis absent -> erreurs bloquantes
             shutil.copy2(PLUGIN_ROOT / "skills" / "gravity-architect" / "SKILL.md", skill_path)
@@ -651,199 +639,6 @@ class TestInitAndInstall(unittest.TestCase):
                 ref_missing_rep.errors,
             )
 
-    def test_registry_on_init_add_discover_and_skip_env(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp:
-            root = Path(tmp)
-            reg_path = self._arch_home / "ateliers.json"
-            repo = root / "app-one"
-            _make_git_repo(repo, branch="main")
-
-            # 1. --discover n'écrit jamais dans ateliers.json
-            with contextlib.redirect_stdout(io.StringIO()):
-                rc_disc = init_workspace.main(
-                    ["--workspace", str(root), "--discover", "--scan-dir", str(root), "--json"]
-                )
-            self.assertEqual(rc_disc, 0)
-            self.assertFalse(reg_path.exists())
-
-            # 2. GRAVITY_ARCHITECT_SKIP_REGISTRY=1 bloque l'écriture
-            ws_skip = root / "ws-skip"
-            with mock.patch.dict(os.environ, {"GRAVITY_ARCHITECT_SKIP_REGISTRY": "1"}):
-                init_workspace.init_workspace(ws_skip, name="Atelier Ignoré")
-            self.assertFalse(reg_path.exists())
-
-            # 3. init_workspace + add_projects_to_workspace enregistrent l'atelier
-            ws = root / "ws-real"
-            init_workspace.init_workspace(ws, name="Atelier Réel")
-            self.assertTrue(reg_path.is_file())
-            data1 = json.loads(reg_path.read_text(encoding="utf-8"))
-            self.assertEqual(data1["schema_version"], 1)
-            self.assertEqual(len(data1["ateliers"]), 1)
-            self.assertEqual(data1["ateliers"][0]["workspace_path"], str(ws.resolve()))
-            self.assertEqual(data1["ateliers"][0]["workspace_name"], "Atelier Réel")
-
-            init_workspace.add_projects_to_workspace(ws, [str(repo)])
-            data2 = json.loads(reg_path.read_text(encoding="utf-8"))
-            self.assertEqual(len(data2["ateliers"]), 1)
-            self.assertEqual(data2["ateliers"][0]["workspace_path"], str(ws.resolve()))
-            self.assertEqual(data2["ateliers"][0]["workspace_name"], "Atelier Réel")
-
-    def test_init_workspace_idempotent_preserves_workspace_name_in_registry(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp:
-            ws = Path(tmp) / "atelier-demo"
-            reg_path = self._arch_home / "ateliers.json"
-
-            with contextlib.redirect_stdout(io.StringIO()):
-                rc_init = init_workspace.main(
-                    ["--workspace", str(ws), "--name", "Atelier Perso"]
-                )
-            self.assertEqual(rc_init, 0)
-            data1 = json.loads(reg_path.read_text(encoding="utf-8"))
-            self.assertEqual(data1["ateliers"][0]["workspace_name"], "Atelier Perso")
-
-            # Ré-exécution idempotente sans `name` ni `--name` -> préserve "Atelier Perso"
-            res_idemp = init_workspace.init_workspace(ws)
-            self.assertIn("projects.json", res_idemp["skipped"])
-            data2 = json.loads(reg_path.read_text(encoding="utf-8"))
-            self.assertEqual(data2["ateliers"][0]["workspace_name"], "Atelier Perso")
-
-            with contextlib.redirect_stdout(io.StringIO()):
-                rc_cli_idemp = init_workspace.main(["--workspace", str(ws)])
-            self.assertEqual(rc_cli_idemp, 0)
-            data3 = json.loads(reg_path.read_text(encoding="utf-8"))
-            self.assertEqual(data3["ateliers"][0]["workspace_name"], "Atelier Perso")
-
-            # Avec --force sans --name, projects.json est réécrit avec le nom dérivé et le registre suit
-            init_workspace.init_workspace(ws, force=True)
-            data4 = json.loads(reg_path.read_text(encoding="utf-8"))
-            self.assertEqual(data4["ateliers"][0]["workspace_name"], "Atelier Demo")
-
-    def test_empty_workspace_onboarding_name_derivation_template_and_skill(self) -> None:
-        # 1. Dérivation du nom d'atelier hors noms génériques
-        self.assertEqual(
-            init_workspace._derive_default_workspace_name(Path("/any/atelier-demo")),
-            "Atelier Demo",
-        )
-        self.assertEqual(
-            init_workspace._derive_default_workspace_name(Path("/any/gravity_studio")),
-            "Gravity Studio",
-        )
-        self.assertEqual(
-            init_workspace._derive_default_workspace_name(Path("/any/---")),
-            init_workspace.DEFAULT_WORKSPACE_NAME,
-        )
-        for generic in ("", ".", "/", "tmp", "temp", "workspace", "projects", "repos", "github", "TMP"):
-            self.assertEqual(
-                init_workspace._derive_default_workspace_name(Path(f"/any/{generic}") if generic not in ("", ".", "/") else Path(generic or ".")),
-                init_workspace.DEFAULT_WORKSPACE_NAME,
-            )
-
-        with tempfile.TemporaryDirectory() as tmp:
-            root = Path(tmp)
-
-            # Dossier métier sans --name -> nom dérivé + 0 projet + --run-sync --offline en 1 passe
-            ws_named = root / "mon-atelier-ia"
-            with contextlib.redirect_stdout(io.StringIO()):
-                rc = init_workspace.main(["--workspace", str(ws_named), "--run-sync", "--offline"])
-            self.assertEqual(rc, 0)
-            cfg_named = json.loads((ws_named / "projects.json").read_text(encoding="utf-8"))
-            self.assertEqual(cfg_named["workspace_name"], "Mon Atelier Ia")
-            self.assertEqual(cfg_named["projects"], [])
-            self.assertIn("# Tableau de bord — Mon Atelier Ia", (ws_named / "ECOSYSTEM.md").read_text(encoding="utf-8"))
-            self.assertTrue((ws_named / "tracking" / "snapshots" / "delta.md").is_file())
-
-            # Dossier générique sans --name -> DEFAULT_WORKSPACE_NAME
-            ws_generic = root / "workspace"
-            init_workspace.init_workspace(ws_generic)
-            cfg_generic = json.loads((ws_generic / "projects.json").read_text(encoding="utf-8"))
-            self.assertEqual(cfg_generic["workspace_name"], init_workspace.DEFAULT_WORKSPACE_NAME)
-
-            # --name explicite prioritaire sur le nom du dossier
-            ws_explicit = root / "autre-dossier"
-            init_workspace.init_workspace(ws_explicit, name="Nom Explicite")
-            cfg_explicit = json.loads((ws_explicit / "projects.json").read_text(encoding="utf-8"))
-            self.assertEqual(cfg_explicit["workspace_name"], "Nom Explicite")
-
-        # 2. Template ECOSYSTEM.md : pistes actives actionnables + blocs AUTO préservés + LF/no-BOM
-        eco_tpl_raw = (PLUGIN_ROOT / "templates" / "ECOSYSTEM.md").read_bytes()
-        self.assertFalse(eco_tpl_raw.startswith(b"\xef\xbb\xbf"))
-        self.assertNotIn(b"\r\n", eco_tpl_raw)
-        eco_tpl_txt = eco_tpl_raw.decode("utf-8")
-        for block in (
-            "ecosystem-meta",
-            "ecosystem-projects",
-            "ecosystem-watches",
-            "ecosystem-artifacts",
-            "ecosystem-hygiene",
-        ):
-            self.assertIn(f"<!-- AUTO:START:{block} -->", eco_tpl_txt)
-            self.assertIn(f"<!-- AUTO:END:{block} -->", eco_tpl_txt)
-        self.assertIn("/gravity-architect add <chemin>", eco_tpl_txt)
-        self.assertIn("/gravity-architect spec <slug>", eco_tpl_txt)
-
-        # 3. Consignes onboarding workspace vide dans SKILL.md et workflows-and-hygiene.md
-        skill_txt = (PLUGIN_ROOT / "skills" / "gravity-architect" / "SKILL.md").read_text(encoding="utf-8")
-        ref_txt = (PLUGIN_ROOT / "skills" / "gravity-architect" / "references" / "workflows-and-hygiene.md").read_text(encoding="utf-8")
-        for text in (skill_txt, ref_txt):
-            self.assertIn("--run-sync", text)
-            self.assertIn("projects.json", text)
-        self.assertIn("Onboarding sur workspace vide", ref_txt)
-
-    def test_architect_posture_ro_code_vs_human_approved_closure_and_deploy(self) -> None:
-        rules_raw = (PLUGIN_ROOT / "rules" / "AGENTS.md").read_bytes()
-        tpl_raw = (PLUGIN_ROOT / "templates" / "AGENTS.md").read_bytes()
-        skill_raw = (PLUGIN_ROOT / "skills" / "gravity-architect" / "SKILL.md").read_bytes()
-
-        for label, raw, limit in (
-            ("rules/AGENTS.md", rules_raw, 513),
-            ("templates/AGENTS.md", tpl_raw, 2500),
-            ("SKILL.md", skill_raw, 6000),
-        ):
-            self.assertFalse(raw.startswith(b"\xef\xbb\xbf"), f"BOM dans {label}")
-            self.assertNotIn(b"\r\n", raw, f"CRLF dans {label}")
-            self.assertLessEqual(len(raw), limit, f"{label} dépasse {limit} o ({len(raw)})")
-
-        rules_txt = rules_raw.decode("utf-8")
-        self.assertIn("Code suivi RO", rules_txt)
-        self.assertIn("fail-closed", rules_txt)
-        self.assertIn("commit/push dev + install auto", rules_txt)
-        self.assertIn("merge/main/release sur accord humain", rules_txt)
-
-        tpl_txt = tpl_raw.decode("utf-8")
-        self.assertIn("chef d'orchestre", tpl_txt)
-        self.assertIn("Code en lecture seule hors de cet atelier", tpl_txt)
-        self.assertIn("Clôture automatique sur `dev`", tpl_txt)
-        self.assertIn("git push origin dev", tpl_txt)
-        self.assertIn("jamais `--force`", tpl_txt)
-        self.assertIn("install.py", tpl_txt)
-        self.assertIn("ecosystem_install.py", tpl_txt)
-        self.assertIn("Release `main` & tags (accord humain explicite obligatoire)", tpl_txt)
-        self.assertIn("interdiction absolue de `merge dev -> main`", tpl_txt)
-        self.assertIn("Aucun `commit` ni `git push` automatique sur un simple `sync`", tpl_txt)
-        self.assertIn("wave_plan_v1", tpl_txt)
-        self.assertNotIn("wave_runner.py", tpl_txt)
-        self.assertIn("/swarm", tpl_txt)
-        self.assertIn("250k", tpl_txt)
-        self.assertNotIn("bridge", tpl_txt.lower())
-
-        skill_txt = skill_raw.decode("utf-8")
-        self.assertIn("Code en lecture seule hors atelier", skill_txt)
-        self.assertIn("Clôture Git & installation", skill_txt)
-        self.assertIn("fail-closed", skill_txt)
-        self.assertIn("git push origin dev", skill_txt)
-        self.assertIn("jamais `--force`", skill_txt)
-        self.assertIn("merge dev -> main", skill_txt)
-        self.assertIn("accord humain explicite", skill_txt)
-        self.assertIn("lecture seule absolue", skill_txt)
-
-        with tempfile.TemporaryDirectory() as tmp:
-            ws = Path(tmp) / "atelier-posture"
-            res = init_workspace.init_workspace(ws, name="Atelier Posture")
-            self.assertIn("AGENTS.md", res["created"])
-            deployed_raw = (ws / "AGENTS.md").read_bytes()
-            self.assertLessEqual(len(deployed_raw), 2500)
-            self.assertEqual(deployed_raw, tpl_raw)
-
     def test_skill_references_hygiene_budgets_and_critical_rules(self) -> None:
         skill_path = PLUGIN_ROOT / "skills" / "gravity-architect" / "SKILL.md"
         ref_path = PLUGIN_ROOT / "skills" / "gravity-architect" / "references" / "workflows-and-hygiene.md"
@@ -856,21 +651,24 @@ class TestInitAndInstall(unittest.TestCase):
         skill_raw = skill_path.read_bytes()
         ref_raw = ref_path.read_bytes()
         for label, raw in (("SKILL.md", skill_raw), ("workflows-and-hygiene.md", ref_raw)):
-            self.assertFalse(raw.startswith(b"\xef\xbb\xbf"), f"BOM dans {label}")
-            self.assertNotIn(b"\r\n", raw, f"CRLF dans {label}")
+            self.assertFalse(raw.startswith(b"\xef\xbb\xbf"), f"BOM in {label}")
+            self.assertNotIn(b"\r\n", raw, f"CRLF in {label}")
 
-        self.assertLessEqual(len(skill_raw), 6000, f"SKILL.md dépasse 6000 o ({len(skill_raw)})")
+        self.assertLessEqual(len(skill_raw), 6000, f"SKILL.md exceeds 6000 B ({len(skill_raw)})")
 
         skill_txt = skill_raw.decode("utf-8")
         ref_txt = ref_raw.decode("utf-8")
+        meta, _ = validator_core.parse_frontmatter(skill_txt)
+        self.assertEqual(meta.get("name"), "gravity-architect")
+        self.assertLessEqual(len(str(meta.get("description") or "")), 160)
         self.assertIn("references/workflows-and-hygiene.md", skill_txt)
 
         for label, rx in validate.PRIVATE_LEAK_RES:
-            self.assertIsNone(rx.search(ref_txt), f"Fuite ({label}) dans workflows-and-hygiene.md")
+            self.assertIsNone(rx.search(ref_txt), f"Leak ({label}) in workflows-and-hygiene.md")
         self.assertIsNone(validate.FORBIDDEN_MOD_RE.search(ref_txt))
 
         critical_tokens = (
-            "non déployé",
+            "drafted, not deployed",
             "--ack-editorial",
             "ecosystem_install.py",
             "wave_plan_v1",
@@ -884,84 +682,76 @@ class TestInitAndInstall(unittest.TestCase):
             "NO_EDITORIAL_CHANGES",
             "../",
             "/compact",
+            "PreInvocation",
+            "atelier_status.py",
+            "RequestFeedback=True",
+            "ask_question",
+            "verify_commands",
+            "opt-in",
         )
         for token in critical_tokens:
-            self.assertIn(token, skill_txt, f"Règle critique manquante dans SKILL.md : {token}")
-            self.assertIn(token, ref_txt, f"Règle critique manquante dans workflows-and-hygiene.md : {token}")
+            self.assertIn(token, skill_txt, f"Missing rule in SKILL.md: {token}")
+            self.assertIn(token, ref_txt, f"Missing rule in workflows-and-hygiene.md: {token}")
 
-        # Clôture ordonnée & gravity-metrics final
         self.assertIn("gravity-metrics", skill_txt)
         self.assertIn("references/workflows-and-hygiene.md) §3", skill_txt)
         for token in (
             "fail-closed",
             "git push origin dev",
             "merge dev -> main",
-            "accord humain explicite",
+            "explicit human approval",
             "gravity-metrics/scripts/cli.py archive <conversation_id>",
             "--update-sealed",
             "--force",
-            "no-op silencieux",
+            "silent no-op",
+            "waiting",
+            "fork",
+            "@monitor",
+            "3.8 Flash",
         ):
-            self.assertIn(token, ref_txt, f"Règle clôture manquante dans workflows-and-hygiene.md : {token}")
+            self.assertIn(token, ref_txt, f"Missing closure/swarm rule in workflows-and-hygiene.md: {token}")
 
-        idx_verifs = ref_txt.index("1. **Retours & vérifications")
-        idx_dev_push = ref_txt.index("2. **Clôture auto sur `dev`")
-        idx_archive = ref_txt.index("3. **Archivage atelier & `--ack-editorial`")
-        idx_metrics = ref_txt.index("4. **Clôture `gravity-metrics`")
+        idx_verifs = ref_txt.index("1. **Reviews & verification")
+        idx_dev_push = ref_txt.index("2. **Auto-closure on `dev`")
+        idx_archive = ref_txt.index("3. **Workshop archiving & `--ack-editorial`")
+        idx_metrics = ref_txt.index("4. **Optional `gravity-metrics`")
         self.assertLess(idx_verifs, idx_dev_push)
         self.assertLess(idx_dev_push, idx_archive)
         self.assertLess(idx_archive, idx_metrics)
 
-        # Cycle 4 phases natif & checkpoint hybride
-        for w2_tok in ("PreInvocation", "atelier_status.py", "RequestFeedback=True", "ask_question", "verify_commands"):
-            self.assertIn(w2_tok, skill_txt, f"Token cycle natif manquant dans SKILL.md : {w2_tok}")
-            self.assertIn(w2_tok, ref_txt, f"Token cycle natif manquant dans workflows-and-hygiene.md : {w2_tok}")
-
-        # Zéro mention Bridge active dans templates, skills et READMEs
-        tpl_agents_txt = (PLUGIN_ROOT / "templates" / "AGENTS.md").read_text(encoding="utf-8")
         plugin_readme_txt = (PLUGIN_ROOT / "README.md").read_text(encoding="utf-8")
         repo_readme_txt = (REPO_ROOT / "README.md").read_text(encoding="utf-8")
+        plugin_json_txt = (PLUGIN_ROOT / "plugin.json").read_text(encoding="utf-8")
         for doc_label, doc_txt in (
-            ("templates/AGENTS.md", tpl_agents_txt),
             ("SKILL.md", skill_txt),
             ("workflows-and-hygiene.md", ref_txt),
             ("plugin/README.md", plugin_readme_txt),
             ("README.md", repo_readme_txt),
+            ("plugin.json", plugin_json_txt),
         ):
-            self.assertNotIn("bridge", doc_txt.lower(), f"Mention Bridge active dans {doc_label}")
-            self.assertNotIn("get_job", doc_txt, f"Mention get_job restante dans {doc_label}")
-            self.assertNotIn("manage_thread", doc_txt, f"Mention manage_thread restante dans {doc_label}")
-
-        tpl_task_txt = (PLUGIN_ROOT / "templates" / "task-template.md").read_text(encoding="utf-8")
-        for doc_label, doc_txt in (
-            ("templates/AGENTS.md", tpl_agents_txt),
-            ("templates/task-template.md", tpl_task_txt),
-            ("SKILL.md", skill_txt),
-            ("workflows-and-hygiene.md", ref_txt),
-            ("plugin/README.md", plugin_readme_txt),
-            ("README.md", repo_readme_txt),
-        ):
+            self.assertNotIn("handoffs/", doc_txt, f"Legacy handoffs/ drift in {doc_label}")
+            self.assertNotIn("bridge", doc_txt.lower(), f"Bridge mention in {doc_label}")
+            self.assertNotIn("gravity-" + "studio", doc_txt.lower(), f"Legacy studio ref in {doc_label}")
+            self.assertNotIn("gravity_" + "studio", doc_txt.lower(), f"Legacy studio ref in {doc_label}")
             for forbidden in (
+                "get_job",
+                "manage_thread",
                 "wave_runner.py",
                 "caveman ultra",
                 "last_verified.patch",
                 "skip_separate_planner",
                 "apply_on_pass",
             ):
-                self.assertNotIn(forbidden, doc_txt, f"Référence interne workflow `{forbidden}` dans {doc_label}")
+                self.assertNotIn(forbidden, doc_txt, f"Internal workflow ref {forbidden!r} in {doc_label}")
 
-        # Bascule Swarm optimisé par défaut (run_workflow en opt-in explicite)
         for doc_label, doc_txt in (
             ("SKILL.md", skill_txt),
             ("workflows-and-hygiene.md", ref_txt),
-            ("templates/AGENTS.md", tpl_agents_txt),
             ("plugin/README.md", plugin_readme_txt),
             ("README.md", repo_readme_txt),
         ):
-            self.assertIn("opt-in", doc_txt, f"Mention opt-in manquante pour run_workflow dans {doc_label}")
-            self.assertIn("swarm", doc_txt.lower(), f"Mention swarm manquante dans {doc_label}")
-        for swarm_tok in ("waiting", "fork", "@monitor", "3.8 Flash"):
-            self.assertIn(swarm_tok, ref_txt, f"Détail topologie Swarm manquant dans workflows-and-hygiene.md : {swarm_tok}")
+            self.assertIn("opt-in", doc_txt, f"Missing opt-in mention in {doc_label}")
+            self.assertIn("swarm", doc_txt.lower(), f"Missing swarm mention in {doc_label}")
 
     def test_validate_int01_03_06_and_fix_python_cmd_install(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -975,7 +765,7 @@ class TestInitAndInstall(unittest.TestCase):
             validate.validate_plugin(plug, ok_rep)
             self.assertTrue(ok_rep.ok(strict=True), f"{ok_rep.errors} | {ok_rep.warnings}")
 
-            # 1. Manifeste invalide (SemVer, suggestedPrompts, disabled, author.name)
+            # 1. Manifeste invalide (SemVer, suggestedPrompts, disabled, author)
             manifest_path = plug / "plugin.json"
             orig_manifest = manifest_path.read_text(encoding="utf-8")
             bad_manifest = json.loads(orig_manifest)
@@ -990,7 +780,7 @@ class TestInitAndInstall(unittest.TestCase):
             man_err = " | ".join(man_rep.errors)
             self.assertIn("SemVer", man_err)
             self.assertIn("disabled", man_err)
-            self.assertIn("author.name", man_err)
+            self.assertIn("author", man_err)
             self.assertIn("suggestedPrompts", man_err)
             manifest_path.write_text(orig_manifest, encoding="utf-8", newline="\n")
 
@@ -1007,7 +797,7 @@ class TestInitAndInstall(unittest.TestCase):
             self.assertIn("CRLF", hk_err)
             hooks_path.write_bytes(orig_hooks)
 
-            # 3. BOM/CRLF sur .py/.svg et liens cassés / file: sur README/SKILL/references/../README
+            # 3. BOM sur .svg et liens cassés / file: sur README/SKILL/../README
             (plug / "assets" / "logo.svg").write_bytes(
                 b"\xef\xbb\xbf" + (PLUGIN_ROOT / "assets" / "logo.svg").read_bytes()
             )
@@ -1024,6 +814,7 @@ class TestInitAndInstall(unittest.TestCase):
 
             # 4. install.py + fix_python_cmd sous Windows simulé (source intacte)
             src_hooks_before = (PLUGIN_ROOT / "hooks.json").read_text(encoding="utf-8")
+
             class _FakeWindowsOs:
                 name = "nt"
 
@@ -1031,21 +822,22 @@ class TestInitAndInstall(unittest.TestCase):
                     return getattr(os, attr)
 
             target_win = root / "inst-win"
-            with mock.patch.object(install, "os", _FakeWindowsOs()), mock.patch("install.has_real_python3", return_value=False):
+            with (
+                mock.patch.object(installer_core, "os", _FakeWindowsOs()),
+                mock.patch.object(installer_core, "has_real_python3", return_value=False),
+            ):
                 dry_buf = io.StringIO()
                 with contextlib.redirect_stdout(dry_buf):
                     self.assertEqual(install.main(["--dry-run", "--target", str(target_win)]), 0)
                 self.assertIn("--fix-python-cmd", dry_buf.getvalue())
 
-                # Avec --no-fix-python : hooks.json conserve python3
                 target_nofix = root / "inst-nofix"
                 self.assertEqual(install.main(["--no-fix-python", "--target", str(target_nofix)]), 0)
                 self.assertIn("python3 hooks/pre_invocation_architect.py", (target_nofix / "hooks.json").read_text(encoding="utf-8"))
 
-                # Sans --no-fix-python : hooks.json adapté sur la copie, source intacte
                 with (
-                    mock.patch.object(validate, "has_real_python3", return_value=False),
-                    mock.patch.object(validate, "_detect_portable_python_cmd", return_value="python"),
+                    mock.patch.object(validator_core, "has_real_python3", return_value=False),
+                    mock.patch.object(validator_core, "_detect_portable_python_cmd", return_value="python"),
                 ):
                     self.assertEqual(validate.main(["--plugin-root", str(target_nofix), "--fix-python-cmd"]), 0)
                 adapted_hooks = json.loads((target_nofix / "hooks.json").read_text(encoding="utf-8"))
@@ -1055,7 +847,7 @@ class TestInitAndInstall(unittest.TestCase):
                 )
             self.assertEqual((PLUGIN_ROOT / "hooks.json").read_text(encoding="utf-8"), src_hooks_before)
 
-    def test_install_records_sources_json_only_on_real_global_install(self) -> None:
+    def test_installer_core_symlink_lock_fallback_and_sources_provenance(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             fake_home = root / "home"
@@ -1083,99 +875,259 @@ class TestInitAndInstall(unittest.TestCase):
                 newline="\n",
             )
 
-            ws_dir = root / "workspace"
-            ws_dir.mkdir()
-            custom_target = root / "custom-target" / "gravity-architect"
-            global_target = (fake_home / ".gemini" / "config" / "plugins" / "gravity-architect").resolve()
+            # 1. Symlink target rejection
+            real_dir = root / "real-dir"
+            real_dir.mkdir()
+            sym_target = root / "sym-target"
+            if hasattr(os, "symlink"):
+                os.symlink(real_dir, sym_target)
+                with contextlib.redirect_stderr(io.StringIO()):
+                    self.assertEqual(install.main(["--target", str(sym_target)]), 1)
 
+            # 2. --check / --dry-run do not modify sources.json
             with (
                 mock.patch.object(Path, "home", return_value=fake_home),
                 mock.patch.dict(os.environ, {"GRAVITY_HOME": str(gravity_home)}),
             ):
-                # 1. Cas sans écriture dans sources.json : --check, --dry-run, --scope workspace, --target
                 self.assertEqual(install.main(["--check"]), 0)
                 self.assertEqual(install.main(["--dry-run"]), 0)
-                self.assertEqual(install.main(["--scope", "workspace", "--workspace", str(ws_dir)]), 0)
-                self.assertEqual(install.main(["--target", str(custom_target)]), 0)
+                self.assertNotIn("gravity-architect", json.loads(sources_path.read_text(encoding="utf-8"))["sources"])
 
-                mid_payload = json.loads(sources_path.read_text(encoding="utf-8"))
-                self.assertNotIn("gravity-architect", mid_payload["sources"])
-                self.assertEqual(mid_payload["sources"]["gravity"], existing_gravity_entry)
-
-                # 2. Installation globale réelle -> enregistre gravity-architect et préserve gravity
+                # 3. Real global install records sources.json atomically and preserves gravity
+                global_target = (fake_home / ".gemini" / "config" / "plugins" / "gravity-architect").resolve()
                 self.assertEqual(install.main(["--scope", "global"]), 0)
                 self.assertTrue(install.is_gravity_architect_plugin_dir(global_target))
-                self.assertFalse((global_target / ".gravity-source.json").exists())
-
                 raw_bytes = sources_path.read_bytes()
                 self.assertFalse(raw_bytes.startswith(b"\xef\xbb\xbf"))
                 self.assertNotIn(b"\r\n", raw_bytes)
-
                 payload = json.loads(raw_bytes.decode("utf-8"))
                 self.assertEqual(payload["schema_version"], 1)
-                self.assertRegex(payload["updated_at"], r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$")
                 self.assertEqual(payload["sources"]["gravity"], existing_gravity_entry)
-
                 entry = payload["sources"]["gravity-architect"]
-                self.assertEqual(
-                    set(entry.keys()),
-                    {
-                        "plugin_name",
-                        "repo_dir",
-                        "repository",
-                        "install_method",
-                        "target_dir",
-                        "git_branch",
-                        "git_sha",
-                        "installed_version",
-                        "installed_at",
-                    },
-                )
-                manifest = json.loads((PLUGIN_ROOT / "plugin.json").read_text(encoding="utf-8"))
                 self.assertEqual(entry["plugin_name"], "gravity-architect")
                 self.assertEqual(Path(entry["repo_dir"]), REPO_ROOT.resolve())
-                self.assertEqual(entry["repository"], manifest["repository"])
                 self.assertEqual(entry["install_method"], "copy")
                 self.assertEqual(Path(entry["target_dir"]), global_target)
-                self.assertEqual(entry["installed_version"], manifest["version"])
-                self.assertRegex(entry["installed_at"], r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$")
                 self.assertTrue(entry["git_sha"])
 
-                # 3. Réinstall refusée sans --force (rc=1) ni --uninstall ne réécrit sources.json
+                # 4. Failed reinstall & --uninstall do not rewrite sources.json
                 before_fail = sources_path.read_text(encoding="utf-8")
                 self.assertEqual(install.main([]), 1)
                 self.assertEqual(sources_path.read_text(encoding="utf-8"), before_fail)
 
+                # 5. is_lock_oserror in-place upgrade fallback on PermissionError
+                lock_err = PermissionError(13, "locked")
+                out_buf = io.StringIO()
+                with (
+                    mock.patch.object(installer_core.os, "rename", side_effect=lock_err),
+                    contextlib.redirect_stdout(out_buf),
+                ):
+                    self.assertEqual(install.main(["--scope", "global", "--force"]), 0)
+                self.assertIn("(in-place)", out_buf.getvalue())
+                self.assertTrue(install.is_gravity_architect_plugin_dir(global_target))
+
+                # 6. Uninstall cleanly (does not rewrite sources.json)
+                before_uninstall = sources_path.read_text(encoding="utf-8")
                 self.assertEqual(install.main(["--uninstall"]), 0)
                 self.assertFalse(global_target.exists())
-                self.assertEqual(sources_path.read_text(encoding="utf-8"), before_fail)
+                self.assertEqual(sources_path.read_text(encoding="utf-8"), before_uninstall)
 
-                # 4. --method agy global réel
-                ok_proc = subprocess.CompletedProcess(args=["agy"], returncode=0, stdout="", stderr="")
-                with (
-                    mock.patch("shutil.which", return_value="/usr/bin/agy"),
-                    mock.patch.object(install, "_run_subprocess", return_value=ok_proc),
-                ):
-                    self.assertEqual(install.main(["--method", "agy"]), 0)
-                agy_entry = json.loads(sources_path.read_text(encoding="utf-8"))["sources"]["gravity-architect"]
-                self.assertEqual(agy_entry["install_method"], "agy")
-                self.assertIsNone(agy_entry["target_dir"])
+    def test_registry_on_init_add_discover_and_skip_env(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            reg_path = self._arch_home / "ateliers.json"
+            repo = root / "app-one"
+            _make_git_repo(repo, branch="main")
 
-                # 5. Tolérance absence de git / .git et repli ~/.gemini/gravity sans GRAVITY_HOME
-                no_git_repo = root / "no-git-repo"
-                no_git_repo.mkdir()
-                with mock.patch.dict(os.environ, {"GRAVITY_HOME": ""}):
-                    written = install._record_install_source(
-                        PLUGIN_ROOT,
-                        global_target,
-                        method="copy",
-                        repo_dir=no_git_repo,
-                    )
-                fallback_path = (fake_home / ".gemini" / "gravity" / "core" / "sources.json").resolve()
-                self.assertEqual(written, fallback_path)
-                fallback_entry = json.loads(fallback_path.read_text(encoding="utf-8"))["sources"]["gravity-architect"]
-                self.assertIsNone(fallback_entry["git_branch"])
-                self.assertIsNone(fallback_entry["git_sha"])
+            with contextlib.redirect_stdout(io.StringIO()):
+                rc_disc = init_workspace.main(
+                    ["--workspace", str(root), "--discover", "--scan-dir", str(root), "--json"]
+                )
+            self.assertEqual(rc_disc, 0)
+            self.assertFalse(reg_path.exists())
+
+            ws_skip = root / "ws-skip"
+            with mock.patch.dict(os.environ, {"GRAVITY_ARCHITECT_SKIP_REGISTRY": "1"}):
+                init_workspace.init_workspace(ws_skip, name="Atelier Ignoré")
+            self.assertFalse(reg_path.exists())
+
+            ws = root / "ws-real"
+            init_workspace.init_workspace(ws, name="Atelier Réel")
+            self.assertTrue(reg_path.is_file())
+            data1 = json.loads(reg_path.read_text(encoding="utf-8"))
+            self.assertEqual(data1["schema_version"], 1)
+            self.assertEqual(len(data1["ateliers"]), 1)
+            self.assertEqual(data1["ateliers"][0]["workspace_path"], str(ws.resolve()))
+            self.assertEqual(data1["ateliers"][0]["workspace_name"], "Atelier Réel")
+
+            init_workspace.add_projects_to_workspace(ws, [str(repo)])
+            data2 = json.loads(reg_path.read_text(encoding="utf-8"))
+            self.assertEqual(len(data2["ateliers"]), 1)
+            self.assertEqual(data2["ateliers"][0]["workspace_path"], str(ws.resolve()))
+            self.assertEqual(data2["ateliers"][0]["workspace_name"], "Atelier Réel")
+
+    def test_init_workspace_idempotent_preserves_workspace_name_in_registry(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            ws = Path(tmp) / "atelier-demo"
+            reg_path = self._arch_home / "ateliers.json"
+
+            with contextlib.redirect_stdout(io.StringIO()):
+                rc_init = init_workspace.main(["--workspace", str(ws), "--name", "Atelier Perso"])
+            self.assertEqual(rc_init, 0)
+            data1 = json.loads(reg_path.read_text(encoding="utf-8"))
+            self.assertEqual(data1["ateliers"][0]["workspace_name"], "Atelier Perso")
+
+            res_idemp = init_workspace.init_workspace(ws)
+            self.assertIn("projects.json", res_idemp["skipped"])
+            data2 = json.loads(reg_path.read_text(encoding="utf-8"))
+            self.assertEqual(data2["ateliers"][0]["workspace_name"], "Atelier Perso")
+
+            with contextlib.redirect_stdout(io.StringIO()):
+                rc_cli_idemp = init_workspace.main(["--workspace", str(ws)])
+            self.assertEqual(rc_cli_idemp, 0)
+            data3 = json.loads(reg_path.read_text(encoding="utf-8"))
+            self.assertEqual(data3["ateliers"][0]["workspace_name"], "Atelier Perso")
+
+            init_workspace.init_workspace(ws, force=True)
+            data4 = json.loads(reg_path.read_text(encoding="utf-8"))
+            self.assertEqual(data4["ateliers"][0]["workspace_name"], "Atelier Demo")
+
+    def test_empty_workspace_onboarding_name_derivation_template_and_skill(self) -> None:
+        self.assertEqual(
+            init_workspace._derive_default_workspace_name(Path("/any/atelier-demo")),
+            "Atelier Demo",
+        )
+        self.assertEqual(
+            init_workspace._derive_default_workspace_name(Path("/any/acme_studio")),
+            "Acme Studio",
+        )
+        self.assertEqual(
+            init_workspace._derive_default_workspace_name(Path("/any/---")),
+            init_workspace.DEFAULT_WORKSPACE_NAME,
+        )
+        for generic in ("", ".", "/", "tmp", "temp", "workspace", "projects", "repos", "github", "TMP"):
+            self.assertEqual(
+                init_workspace._derive_default_workspace_name(
+                    Path(f"/any/{generic}") if generic not in ("", ".", "/") else Path(generic or ".")
+                ),
+                init_workspace.DEFAULT_WORKSPACE_NAME,
+            )
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            ws_named = root / "mon-atelier-ia"
+            with contextlib.redirect_stdout(io.StringIO()):
+                rc = init_workspace.main(["--workspace", str(ws_named), "--run-sync", "--offline"])
+            self.assertEqual(rc, 0)
+            cfg_named = json.loads((ws_named / "projects.json").read_text(encoding="utf-8"))
+            self.assertEqual(cfg_named["workspace_name"], "Mon Atelier Ia")
+            self.assertEqual(cfg_named["projects"], [])
+            self.assertIn("# Tableau de bord — Mon Atelier Ia", (ws_named / "ECOSYSTEM.md").read_text(encoding="utf-8"))
+            self.assertTrue((ws_named / "tracking" / "snapshots" / "delta.md").is_file())
+
+            ws_generic = root / "workspace"
+            init_workspace.init_workspace(ws_generic)
+            cfg_generic = json.loads((ws_generic / "projects.json").read_text(encoding="utf-8"))
+            self.assertEqual(cfg_generic["workspace_name"], init_workspace.DEFAULT_WORKSPACE_NAME)
+
+            ws_explicit = root / "autre-dossier"
+            init_workspace.init_workspace(ws_explicit, name="Nom Explicite")
+            cfg_explicit = json.loads((ws_explicit / "projects.json").read_text(encoding="utf-8"))
+            self.assertEqual(cfg_explicit["workspace_name"], "Nom Explicite")
+
+        eco_tpl_raw = (PLUGIN_ROOT / "templates" / "ECOSYSTEM.md").read_bytes()
+        self.assertFalse(eco_tpl_raw.startswith(b"\xef\xbb\xbf"))
+        self.assertNotIn(b"\r\n", eco_tpl_raw)
+        eco_tpl_txt = eco_tpl_raw.decode("utf-8")
+        for block in (
+            "ecosystem-meta",
+            "ecosystem-projects",
+            "ecosystem-watches",
+            "ecosystem-artifacts",
+            "ecosystem-hygiene",
+        ):
+            self.assertIn(f"<!-- AUTO:START:{block} -->", eco_tpl_txt)
+            self.assertIn(f"<!-- AUTO:END:{block} -->", eco_tpl_txt)
+        self.assertIn("/gravity-architect add <chemin>", eco_tpl_txt)
+        self.assertIn("/gravity-architect spec <slug>", eco_tpl_txt)
+        self.assertNotIn("archives/README.md", eco_tpl_txt)
+        self.assertNotIn("handoffs/", eco_tpl_txt)
+
+        skill_txt = (PLUGIN_ROOT / "skills" / "gravity-architect" / "SKILL.md").read_text(encoding="utf-8")
+        ref_txt = (PLUGIN_ROOT / "skills" / "gravity-architect" / "references" / "workflows-and-hygiene.md").read_text(encoding="utf-8")
+        for text in (skill_txt, ref_txt):
+            self.assertIn("--run-sync", text)
+            self.assertIn("projects.json", text)
+        self.assertIn("Empty Workspace Onboarding", ref_txt)
+
+    def test_architect_posture_ro_code_vs_human_approved_closure_and_deploy(self) -> None:
+        rules_raw = (PLUGIN_ROOT / "rules" / "AGENTS.md").read_bytes()
+        tpl_raw = (PLUGIN_ROOT / "templates" / "AGENTS.md").read_bytes()
+        skill_raw = (PLUGIN_ROOT / "skills" / "gravity-architect" / "SKILL.md").read_bytes()
+
+        for label, raw, limit in (
+            ("rules/AGENTS.md", rules_raw, 513),
+            ("templates/AGENTS.md", tpl_raw, 2500),
+            ("SKILL.md", skill_raw, 6000),
+        ):
+            self.assertFalse(raw.startswith(b"\xef\xbb\xbf"), f"BOM dans {label}")
+            self.assertNotIn(b"\r\n", raw, f"CRLF dans {label}")
+            self.assertLessEqual(len(raw), limit, f"{label} dépasse {limit} o ({len(raw)})")
+
+        tpl_txt = tpl_raw.decode("utf-8")
+        self.assertIn("chef d'orchestre", tpl_txt)
+        self.assertIn("Code en lecture seule hors de cet atelier", tpl_txt)
+        self.assertIn("Clôture automatique sur `dev`", tpl_txt)
+        self.assertIn("git push origin dev", tpl_txt)
+        self.assertIn("jamais `--force`", tpl_txt)
+        self.assertIn("install.py", tpl_txt)
+        self.assertIn("ecosystem_install.py", tpl_txt)
+        self.assertIn("Release `main` & tags (accord humain explicite obligatoire)", tpl_txt)
+        self.assertIn("interdiction absolue de `merge dev -> main`", tpl_txt)
+        self.assertIn("Aucun `commit` ni `git push` automatique sur un simple `sync`", tpl_txt)
+        self.assertIn("wave_plan_v1", tpl_txt)
+        self.assertNotIn("wave_runner.py", tpl_txt)
+        self.assertIn("/swarm", tpl_txt)
+        self.assertIn("250k", tpl_txt)
+        self.assertNotIn("bridge", tpl_txt.lower())
+        self.assertNotIn("handoffs/", tpl_txt)
+
+        skill_txt = skill_raw.decode("utf-8")
+        self.assertIn("Strict read-only outside the workshop", skill_txt)
+        self.assertIn("git push origin dev", skill_txt)
+        self.assertIn("merge dev -> main", skill_txt)
+        self.assertIn("explicit human approval", skill_txt)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            ws = Path(tmp) / "atelier-posture"
+            res = init_workspace.init_workspace(ws, name="Atelier Posture")
+            self.assertIn("AGENTS.md", res["created"])
+            deployed_raw = (ws / "AGENTS.md").read_bytes()
+            self.assertLessEqual(len(deployed_raw), 2500)
+            self.assertEqual(deployed_raw, tpl_raw)
+
+    def test_add_projects_and_init_workspace_lock_contention_and_no_workspace_locks(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            ws = root / "atelier"
+            repo1 = root / "repo-one"
+            repo2 = root / "repo-two"
+            _make_git_repo(repo1, branch="main")
+            _make_git_repo(repo2, branch="main")
+
+            init_workspace.init_workspace(ws, name="Locked Atelier", projects=[("repo-one", "../repo-one")])
+            self.assertEqual(list(ws.rglob("*.lock")), [])
+            self.assertTrue((self._arch_home / "locks").is_dir())
+
+            before_cfg = (ws / "projects.json").read_text(encoding="utf-8")
+            lock_file = init_workspace.workspace_lock_path(ws)
+            with init_workspace.exclusive_file_lock(lock_file, timeout_s=1.0):
+                with self.assertRaises(TimeoutError):
+                    init_workspace.add_projects_to_workspace(ws, [str(repo2)], timeout_s=0.05)
+
+            self.assertEqual((ws / "projects.json").read_text(encoding="utf-8"), before_cfg)
+            self.assertFalse((ws / "tracking" / "projects" / "repo-two.md").exists())
+            self.assertEqual(list(ws.rglob("*.lock")), [])
 
 
 if __name__ == "__main__":

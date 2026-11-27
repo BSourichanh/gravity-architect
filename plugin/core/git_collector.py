@@ -19,7 +19,7 @@ from core.discovery import (
     detect_version_source,
     evaluate_project_compliance,
 )
-from core.io_utils import CHANGELOG_SECTION_RE, run_readonly_cmd, write_utf8
+from core.io_utils import CHANGELOG_SECTION_RE, run_readonly_cmd
 
 INSTALL_ADAPTED_FILENAMES = {"hooks.json", "mcp_config.json", "sidecar.json"}
 INSTALL_IGNORED_DIRS = {"__pycache__", ".git", ".pytest_cache", ".mypy_cache"}
@@ -335,7 +335,7 @@ def _init_project_snapshot(
             "install_drift": False, "install_content_compared": False,
             "install_content_drift": False, "install_content_diff_files": [],
             "latest_tag": None, "tags": [], "recent_commits": [],
-            "has_changelog": False, "changelog_archive": None, "changelog_sha256": None,
+            "has_changelog": False, "changelog_path": None, "changelog_archive": None, "changelog_sha256": None,
             "latest_changelog_version": None, "latest_changelog_date": None,
             "latest_changelog_excerpt": "", "latest_released_changelog_version": None,
             "latest_released_changelog_date": None, "has_unreleased": False,
@@ -448,7 +448,7 @@ def _collect_git_metadata(
 def collect_project_snapshot(
     project_cfg: dict,
     base_dir: Path,
-    changelogs_dir: Path,
+    changelogs_dir: Path | None = None,
     installed_plugins_map: dict[str, dict] | None = None,
     dry_run: bool = False,
     concept_root: Path | None = None,
@@ -466,13 +466,6 @@ def collect_project_snapshot(
     ignore_paths = list(project_cfg.get("runtime_ignore_paths") or [".agents/", ".agents"])
     preset = str(project_cfg.get("preset") or default_preset or "generic").strip().lower()
     version_json_path = project_cfg.get("version_json_path")
-
-    archive_rel_prefix = "archives/changelogs"
-    if concept_root is not None:
-        try:
-            archive_rel_prefix = changelogs_dir.resolve().relative_to(concept_root.resolve()).as_posix()
-        except ValueError:
-            pass
 
     snapshot = _init_project_snapshot(project_cfg, repo_dir, preset, main_branch, dev_branch)
     if not snapshot["exists"]:
@@ -517,14 +510,10 @@ def collect_project_snapshot(
     if changelog_rel and (repo_dir / str(changelog_rel)).is_file():
         changelog_text = (repo_dir / str(changelog_rel)).read_text(encoding="utf-8", errors="replace")
         stable["has_changelog"] = True
-        stable["changelog_archive"] = f"{archive_rel_prefix}/{project_id}-CHANGELOG.md"
+        stable["changelog_path"] = str(changelog_rel).replace("\\", "/")
+        stable["changelog_archive"] = None
         stable["changelog_sha256"] = hashlib.sha256(changelog_text.encode("utf-8")).hexdigest()
         stable.update(extract_latest_changelog_section(changelog_text, max_lines=max_changelog_lines))
-        if not dry_run:
-            archive_file = changelogs_dir / f"{project_id}-CHANGELOG.md"
-            norm_chg = changelog_text.replace("\r\n", "\n")
-            if not archive_file.is_file() or archive_file.read_text(encoding="utf-8", errors="replace").replace("\r\n", "\n") != norm_chg:
-                write_utf8(archive_file, norm_chg)
 
     agents_rel = project_cfg.get("agents_file", "AGENTS.md")
     if agents_rel and (repo_dir / str(agents_rel)).is_file():

@@ -3,13 +3,20 @@
 from __future__ import annotations
 
 from pathlib import Path
+import posixpath
 import re
+import sys
 
-from core.io_utils import (
+_PLUGIN_ROOT = Path(__file__).resolve().parent.parent
+if str(_PLUGIN_ROOT) not in sys.path:
+    sys.path.insert(0, str(_PLUGIN_ROOT))
+
+from _shared.atomic_io import write_text_atomic  # noqa: E402
+from core.io_utils import (  # noqa: E402
     collect_path_replacements, compare_cli_versions, format_project_display_path,
     has_install_audit, resolve_public_mode, sanitize_markdown_paths, snapshot_watches_map,
     visible_installed_plugins, visible_orphan_plugin_dirs, write_json_if_changed,
-    write_md_if_changed, write_utf8,
+    write_md_if_changed,
 )
 
 
@@ -125,7 +132,7 @@ def _render_snapshot_project_detail(proj: dict, effective_public: bool) -> list[
         f"vs `{branches.get('main_branch', 'main')}` @ `{branches.get('main_head') or 'n/a'}` "
         f"(tag `main` : `{branches.get('main_latest_tag') or branches.get('main_tag') or 'aucun'}`, post-tag : `{branches.get('commits_since_latest_tag', 0)}`)",
         f"- **Tags :** {', '.join(f'`{t}`' for t in stable['tags']) if stable['tags'] else 'aucun'}",
-        f"- **Archive CHANGELOG :** `{stable['changelog_archive']}`" if stable["changelog_archive"] else "- **Archive CHANGELOG :** absent dans le dépôt",
+        f"- **CHANGELOG :** `{stable.get('changelog_path') or 'CHANGELOG.md'}` *(source dépôt)*" if stable.get("has_changelog") else "- **CHANGELOG :** absent dans le dépôt",
     ])
     if not comp.get("ok"):
         lines.append(f"- **Écarts conformité :** {'; '.join(comp.get('issues') or [])}")
@@ -408,7 +415,7 @@ def build_ecosystem_blocks(
     ]
     if show_installed:
         meta_lines.append(f"- **CLI locale `agy` :** `{env.get('local_agy_version') or 'non détectée'}` · **Plugins installés :** {_format_installed_summary(snapshot, effective_public)}")
-    meta_lines.append("- **Charte :** [`AGENTS.md`](AGENTS.md) · **Archives :** [`archives/README.md`](archives/README.md)")
+    meta_lines.append("- **Charte :** [`AGENTS.md`](AGENTS.md)")
 
     headers = ["Projet", "Release (`main`)", "Branche `dev`"] + (["Installé local"] if show_installed else []) + ["WIP", "Fiche"]
     proj_lines = ["| " + " | ".join(headers) + " |", "|" + "|".join(["---"] * len(headers)) + "|"]
@@ -469,12 +476,24 @@ def build_ecosystem_blocks(
     return blocks
 
 
+def _format_project_changelog_link(proj: dict, effective_public: bool) -> str:
+    stable = proj["stable"]
+    if not stable.get("has_changelog"):
+        return "**Absent**"
+    chg_rel = str(stable.get("changelog_path") or proj.get("changelog") or "CHANGELOG.md").replace("\\", "/").lstrip("/")
+    raw_path = str(proj.get("display_path") or proj.get("path") or "").replace("\\", "/").strip()
+    if effective_public or not raw_path or raw_path.startswith("/") or (len(raw_path) >= 2 and raw_path[1] == ":"):
+        return f"`{chg_rel}`"
+    target = posixpath.normpath(f"../../{raw_path.rstrip('/')}/{chg_rel}")
+    return f"[`{chg_rel}`]({target})"
+
+
 def _build_project_card_meta_body(proj: dict, sync_date: str, effective_public: bool) -> str:
     pid, stable, wip = proj["id"], proj["stable"], proj["wip"]
     branches = stable.get("branches") or {}
     dev_b, main_b = branches.get("dev_branch") or proj.get("default_dev_branch") or "dev", branches.get("main_branch") or "main"
     display_path = format_project_display_path(proj, public_mode=effective_public)
-    chg_link = f"[`{pid}-CHANGELOG.md`](../../archives/changelogs/{pid}-CHANGELOG.md)" if stable.get("has_changelog") else "**Absent**"
+    chg_link = _format_project_changelog_link(proj, effective_public)
 
     if not proj["exists"]:
         release_line, branch_line, wip_line = "dépôt introuvable", "dépôt introuvable", "Dépôt absent"
@@ -545,7 +564,7 @@ def apply_auto_doc_updates(
             any_changed = any_changed or changed
         if any_changed:
             if not dry_run:
-                write_utf8(eco_path, current)
+                write_text_atomic(eco_path, current)
             updated_files.append("ECOSYSTEM.md")
 
     for proj in snapshot["projects"]:
@@ -563,7 +582,7 @@ def apply_auto_doc_updates(
         current, ch2 = replace_auto_block(current, f"project-tasks:{pid}", tasks_body)
         if ch1 or ch2:
             if not dry_run:
-                write_utf8(card_path, current)
+                write_text_atomic(card_path, current)
             updated_files.append(rel)
 
     env = snapshot.get("environment") or {}
@@ -579,7 +598,7 @@ def apply_auto_doc_updates(
             current, ch = replace_auto_block(current, "antigravity-meta", body)
         if ch:
             if not dry_run:
-                write_utf8(impact_path, current)
+                write_text_atomic(impact_path, current)
             if str(impact_rel) not in updated_files:
                 updated_files.append(str(impact_rel))
 

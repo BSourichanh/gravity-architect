@@ -1,12 +1,16 @@
 # Task — `<projet>` : [Titre court du lot]
 
-- **Vague :** `1` *(entier >= 1)*
-- **Dépôt cible :** `<nom-du-dépôt>` (`<chemin-relatif>`)
-- **Branche attendue :** `dev`
-- **Dépendances :** `aucune` *(IDs de tasks antérieures, ex. `2026-11-24-core-lot1`)*
-- **Profil workflow :** `standard` *(quick | standard | deep)*
-- **Spec source :** `specs/<YYYY-MM-DD>-<slug>.md`
+- **Task ID :** `TASK-<DOMAINE>-<NN>`
+- **Spec ID :** `SPEC-<DOMAINE>-<NN>`
+- **Spec source :** `specs/YYYY-MM-DD-<slug>.md`
+- **Acceptance Criteria Covered :** `AC-1`
 - **Date / Statut :** `YYYY-MM-DD` — `ready`
+- **Vague :** `1` *(entier >= 1)*
+- **Nom de vague :** `...` *(optionnel)*
+- **Dépôt cible :** `<id>` (../<id>)
+- **Branche attendue :** `refonte/socle`
+- **Dépendances :** `aucune` *(stems exacts de tasks actives dans `tasks/`, ex. `2026-11-26-w1-gravity-shared-core`)*
+- **Profil workflow :** `standard` *(quick | standard | deep)*
 
 ---
 
@@ -30,7 +34,7 @@
 - `CHANGELOG.md` — *entrée `[Unreleased]` en worktree*
 
 ## Invariants à respecter
-- *(Reprendre les invariants exacts du dépôt cible : branche `dev`, conventions Git, stdlib/encodage, tests et validations obligatoires.)*
+- *(Reprendre les invariants exacts du dépôt cible : branche `refonte/socle`, conventions Git, 100 % stdlib Python 3.10+, UTF-8/LF, tests et validations obligatoires.)*
 
 ## Critères d'acceptation & Vérifications obligatoires
 - [ ] Critère 1

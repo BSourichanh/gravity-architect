@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
 import hashlib
 import json
 import os
@@ -13,13 +12,12 @@ import sys
 import tempfile
 
 SCHEMA_VERSION = 5
-ATELIERS_REGISTRY_FILENAME = "ateliers.json"
-MAX_REGISTERED_ATELIERS = 20
 
 DEFAULT_HOT_BUDGETS = {
     "AGENTS.md": 2500, "ECOSYSTEM.md": 6000,
     "tracking/antigravity/IMPACT.md": 6000, "project_card_max_bytes": 3500,
 }
+
 AUTO_DISCOVER_SKIP_DIRS = {".git", "__pycache__", "node_modules", ".venv", "venv"}
 
 SECTION_RE = re.compile(r"^##\s+(.+?)\s*$", re.MULTILINE)
@@ -117,7 +115,11 @@ def load_config(config_path: Path) -> dict:
 def strip_volatile_json(obj):
     """Retourne une copie récursive sans les horodatages volatils (`synced_at`, `acked_at`)."""
     if isinstance(obj, dict):
-        return {k: strip_volatile_json(v) for k, v in obj.items() if k not in ("synced_at", "acked_at")}
+        return {
+            k: strip_volatile_json(v)
+            for k, v in obj.items()
+            if k not in ("synced_at", "acked_at")
+        }
     if isinstance(obj, list):
         return [strip_volatile_json(item) for item in obj]
     return obj
@@ -186,95 +188,21 @@ def truncate_text(text: str, max_len: int = 160) -> str:
     return cut.rstrip(" ,;:-") + "…"
 
 
-def _raw_architect_home(
-    architect_home: Path | None = None, *, env: dict[str, str] | None = None, home_dir: Path | None = None
+def default_architect_home(
+    *,
+    env: dict[str, str] | None = None,
+    home_dir: Path | None = None,
 ) -> Path:
-    if architect_home is not None:
-        return architect_home.expanduser()
-    env_map = env if env is not None else os.environ
-    for key, suffix in (("GRAVITY_ARCHITECT_HOME", None), ("GRAVITY_HOME", "architect")):
-        val = str(env_map.get(key) or "").strip()
-        if val:
-            base = Path(val).expanduser()
-            return (base / suffix) if suffix else base
-    base_home = (home_dir if home_dir is not None else Path.home()).expanduser()
-    return base_home / ".gemini" / "gravity" / "architect"
-
-
-def default_architect_home(*, env: dict[str, str] | None = None, home_dir: Path | None = None) -> Path:
     """Résout le dossier centralisé Architect (`GRAVITY_ARCHITECT_HOME` > `GRAVITY_HOME/architect` > `~/.gemini/gravity/architect`)."""
-    return _raw_architect_home(env=env, home_dir=home_dir).resolve()
-
-
-def resolve_ateliers_registry_path(
-    architect_home: Path | None = None, env: dict[str, str] | None = None, home_dir: Path | None = None
-) -> Path:
-    """Résout le chemin du registre centralisé `<architect_home>/ateliers.json`."""
-    base = architect_home.expanduser().resolve() if architect_home is not None else default_architect_home(env=env, home_dir=home_dir)
-    return base / ATELIERS_REGISTRY_FILENAME
-
-
-def _is_valid_atelier_dir(workspace_dir: Path) -> bool:
-    """Vérifie qu'un dossier non symlink contient `projects.json` et `ECOSYSTEM.md` (non symlinks)."""
-    try:
-        if workspace_dir.is_symlink() or not workspace_dir.is_dir():
-            return False
-        cfg_file, eco_file = workspace_dir / "projects.json", workspace_dir / "ECOSYSTEM.md"
-        return not cfg_file.is_symlink() and cfg_file.is_file() and not eco_file.is_symlink() and eco_file.is_file()
-    except OSError:
-        return False
-
-
-def _merge_existing_ateliers(registry_path: Path, seen_keys: set[str], limit: int) -> list[dict[str, str]]:
-    merged: list[dict[str, str]] = []
-    raw_ateliers = (read_json_safe(registry_path) or {}).get("ateliers")
-    if not isinstance(raw_ateliers, list):
-        return merged
-    for item in raw_ateliers:
-        if len(merged) >= limit:
-            break
-        raw_p = str(item.get("workspace_path") or "").strip() if isinstance(item, dict) else ""
-        if not raw_p or not _is_valid_atelier_dir(cand_raw := Path(raw_p).expanduser()):
-            continue
-        cand_canonical = cand_raw.resolve()
-        if (cand_key := os.path.normcase(str(cand_canonical))) in seen_keys:
-            continue
-        seen_keys.add(cand_key)
-        merged.append({
-            "workspace_path": str(cand_canonical),
-            "workspace_name": str(item.get("workspace_name") or "").strip(),
-            "updated_at": str(item.get("updated_at") or "").strip(),
-        })
-    return merged
-
-
-def register_atelier(
-    workspace_root: Path, *, workspace_name: str = "", architect_home: Path | None = None,
-    env: dict[str, str] | None = None, home_dir: Path | None = None,
-) -> bool:
-    """Enregistre l'atelier courant (MRU, max 20) dans `<architect_home>/ateliers.json` en best-effort."""
     env_map = env if env is not None else os.environ
-    if str(env_map.get("GRAVITY_ARCHITECT_SKIP_REGISTRY") or "").strip() == "1":
-        return False
-    try:
-        ws_raw = workspace_root.expanduser()
-        if not _is_valid_atelier_dir(ws_raw):
-            return False
-        ws_canonical = ws_raw.resolve()
-        raw_home = _raw_architect_home(architect_home, env=env_map, home_dir=home_dir)
-        registry_path = resolve_ateliers_registry_path(architect_home, env=env_map, home_dir=home_dir)
-        if any(p.is_symlink() for p in (raw_home / ATELIERS_REGISTRY_FILENAME, raw_home, raw_home.parent)):
-            return False
-        if registry_path.is_symlink() or (registry_path.exists() and not registry_path.is_file()):
-            return False
-        resolved_name = str(workspace_name or "").strip() or str((read_json_safe(ws_canonical / "projects.json") or {}).get("workspace_name") or "").strip()
-        now_utc = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-        entries = [{"workspace_path": str(ws_canonical), "workspace_name": resolved_name, "updated_at": now_utc}]
-        entries.extend(_merge_existing_ateliers(registry_path, {os.path.normcase(str(ws_canonical))}, MAX_REGISTERED_ATELIERS - 1))
-        write_utf8(registry_path, json.dumps({"schema_version": 1, "ateliers": entries[:MAX_REGISTERED_ATELIERS]}, indent=2, ensure_ascii=False) + "\n")
-        return True
-    except (OSError, ValueError, TypeError):
-        return False
+    architect_env = str(env_map.get("GRAVITY_ARCHITECT_HOME") or "").strip()
+    if architect_env:
+        return Path(architect_env).expanduser().resolve()
+    gravity_env = str(env_map.get("GRAVITY_HOME") or "").strip()
+    if gravity_env:
+        return (Path(gravity_env).expanduser().resolve() / "architect").resolve()
+    base_home = (home_dir if home_dir is not None else Path.home()).expanduser().resolve()
+    return (base_home / ".gemini" / "gravity" / "architect").resolve()
 
 
 def resolve_public_mode(cfg: dict | None) -> bool:
@@ -284,7 +212,9 @@ def resolve_public_mode(cfg: dict | None) -> bool:
     privacy = cfg.get("privacy")
     if isinstance(privacy, dict) and "public_mode" in privacy:
         return bool(privacy.get("public_mode"))
-    return bool(cfg.get("public_mode")) if "public_mode" in cfg else False
+    if "public_mode" in cfg:
+        return bool(cfg.get("public_mode"))
+    return False
 
 
 def is_machine_absolute_path(raw: str) -> bool:
@@ -468,15 +398,23 @@ def run_readonly_cmd(args: list[str], cwd: Path | None = None, timeout: int = 15
 
 
 MD_H1_RE = re.compile(r"^#\s+(.+?)\s*$", re.MULTILINE)
-STATUS_LINE_RE = re.compile(r"^\s*-\s*\*\*(?:Date\s*/\s*)?Statut\s*:\*\*\s*(.+?)\s*$", re.MULTILINE | re.IGNORECASE)
-TARGET_LINE_RE = re.compile(r"^\s*-\s*\*\*(?:Dépôt cible|Projets? impactés?)\s*:\*\*\s*(.+?)\s*$", re.MULTILINE | re.IGNORECASE)
-WAVE_LINE_RE = re.compile(r"^\s*-\s*\*\*Vague\s*:\*\*\s*(.+?)\s*$", re.MULTILINE | re.IGNORECASE)
-DEPS_LINE_RE = re.compile(r"^\s*-\s*\*\*D[ée]pendances\s*:\*\*\s*(.+?)\s*$", re.MULTILINE | re.IGNORECASE)
-BRANCH_LINE_RE = re.compile(r"^\s*-\s*\*\*Branche\s+attendue\s*:\*\*\s*(.+?)\s*$", re.MULTILINE | re.IGNORECASE)
-PROFILE_LINE_RE = re.compile(r"^\s*-\s*\*\*Profil\s+workflow\s*:\*\*\s*(.+?)\s*$", re.MULTILINE | re.IGNORECASE)
-FILES_LINE_RE = re.compile(r"^\s*-\s*\*\*Fichiers\s+cibles\s*:\*\*\s*(.+?)\s*$", re.MULTILINE | re.IGNORECASE)
-ANCHORS_LINE_RE = re.compile(r"^\s*-\s*\*\*Ancres\s*:\*\*\s*(.+?)\s*$", re.MULTILINE | re.IGNORECASE)
-ARTIFACT_FILE_SECTIONS = frozenset({"ancres exactes", "ancres", "fichiers cibles", "fichiers probables"})
+TASK_ID_RE = re.compile(r"^\s*-\s*\*\*Task\s+ID(?:\s*:\*\*|\*\*\s*:)\s*(.+?)\s*$", re.MULTILINE | re.IGNORECASE)
+SPEC_ID_RE = re.compile(r"^\s*-\s*\*\*(?:Spec\s+ID|ID\s+Spec)(?:\s*:\*\*|\*\*\s*:)\s*(.+?)\s*$", re.MULTILINE | re.IGNORECASE)
+SPEC_SOURCE_RE = re.compile(r"^\s*-\s*\*\*(?:Spec\s+source|Source\s+Spec|Sp[ée]cification\s+source)(?:\s*:\*\*|\*\*\s*:)\s*(.+?)\s*$", re.MULTILINE | re.IGNORECASE)
+AC_LINE_RE = re.compile(r"^\s*-\s*\*\*(?:Acceptance\s+Criteria(?:\s+Covered)?|Crit[èe]res?\s+d['’]acceptation(?:\s+couverts?)?)(?:\s*:\*\*|\*\*\s*:)\s*(.+?)\s*$", re.MULTILINE | re.IGNORECASE)
+WAVE_NAME_RE = re.compile(r"^\s*-\s*\*\*(?:Nom\s+de\s+vague|Wave\s+name)(?:\s*:\*\*|\*\*\s*:)\s*(.+?)\s*$", re.MULTILINE | re.IGNORECASE)
+STATUS_LINE_RE = re.compile(r"^\s*-\s*\*\*(?:(?:Date\s*/\s*)?(?:Statut|Status))(?:\s*:\*\*|\*\*\s*:)\s*(.+?)\s*$", re.MULTILINE | re.IGNORECASE)
+TARGET_LINE_RE = re.compile(r"^\s*-\s*\*\*(?:D[ée]p[ôo]t\s+cible|Target\s+(?:project|repo(?:sitory)?)|Projets?\s+impact[ée]s?|Impacted\s+projects?)(?:\s*:\*\*|\*\*\s*:)\s*(.+?)\s*$", re.MULTILINE | re.IGNORECASE)
+WAVE_LINE_RE = re.compile(r"^\s*-\s*\*\*(?:Vague|Wave)(?:\s*:\*\*|\*\*\s*:)\s*(.+?)\s*$", re.MULTILINE | re.IGNORECASE)
+DEPS_LINE_RE = re.compile(r"^\s*-\s*\*\*(?:D[ée]pendances|Dependencies)(?:\s*:\*\*|\*\*\s*:)\s*(.+?)\s*$", re.MULTILINE | re.IGNORECASE)
+BRANCH_LINE_RE = re.compile(r"^\s*-\s*\*\*(?:Branche\s+attendue|Expected\s+branch)(?:\s*:\*\*|\*\*\s*:)\s*(.+?)\s*$", re.MULTILINE | re.IGNORECASE)
+PROFILE_LINE_RE = re.compile(r"^\s*-\s*\*\*(?:Profil\s+workflow|Workflow\s+profile)(?:\s*:\*\*|\*\*\s*:)\s*(.+?)\s*$", re.MULTILINE | re.IGNORECASE)
+FILES_LINE_RE = re.compile(r"^\s*-\s*\*\*(?:Fichiers\s+cibles|Target\s+files)(?:\s*:\*\*|\*\*\s*:)\s*(.+?)\s*$", re.MULTILINE | re.IGNORECASE)
+ANCHORS_LINE_RE = re.compile(r"^\s*-\s*\*\*(?:Ancres(?:\s+exactes)?|Exact\s+anchors|Anchors)(?:\s*:\*\*|\*\*\s*:)\s*(.+?)\s*$", re.MULTILINE | re.IGNORECASE)
+ARTIFACT_FILE_SECTIONS = frozenset({
+    "ancres exactes", "ancres", "fichiers cibles", "fichiers probables",
+    "exact anchors", "anchors", "target files", "probable files",
+})
 ANCHOR_TAIL_RE = re.compile(r"(?:\s*::.*|\s*\(?~L\d+(?:-\s*L?\d+)?\)?.*)$")
 HYBRID_ANCHOR_RE = re.compile(r"::|~L\d+")
 EMPTY_FIELD_TOKENS = frozenset({"", "aucun", "aucune", "none", "n/a", "-", "—"})
@@ -506,17 +444,14 @@ def normalize_target_file(raw: str) -> str:
 
 
 def _looks_like_file_path(head: str) -> bool:
-    if not head or head.lower() in EMPTY_FIELD_TOKENS:
-        return False
-    return "/" in head or "\\" in head or "." in head or head in BARE_ROOT_FILES
+    return bool(head) and head.lower() not in EMPTY_FIELD_TOKENS and ("/" in head or "\\" in head or "." in head or head in BARE_ROOT_FILES)
 
 
 def _clean_bullet_item(raw: str) -> str:
     s = re.split(r"\s+[—–]\s+|\s+--\s+", raw.strip(), maxsplit=1)[0].strip()
     if m := re.match(r"^\[([^\]]+)\]\([^)]+\)(.*)$", s):
         s = m.group(1) + m.group(2)
-    s = re.sub(r"\*?\((?!~L)[^)]*\)\*?", "", s).replace("`", "").strip()
-    return s.strip(",;").strip()
+    return re.sub(r"\*?\((?!~L)[^)]*\)\*?", "", s).replace("`", "").strip().strip(",;").strip()
 
 
 def _record_target_item(item: str, target_files: list[str], anchors: dict[str, list[str]]) -> str | None:
@@ -558,7 +493,7 @@ def _extract_targets_and_anchors(text: str) -> tuple[list[str], dict[str, list[s
                 continue
             norm = normalize_target_file(item)
             if indent >= 2 and current_parent and not _looks_like_file_path(norm):
-                if HYBRID_ANCHOR_RE.search(item) or section_kind in ("ancres exactes", "ancres"):
+                if HYBRID_ANCHOR_RE.search(item) or section_kind in ("ancres exactes", "ancres", "exact anchors", "anchors"):
                     sep = "" if item.startswith("::") else (" " if item.startswith(("~L", "(~L")) else "::")
                     combined = f"{current_parent}{sep}{item}"
                     bucket = anchors.setdefault(current_parent, [])
@@ -574,6 +509,32 @@ def _extract_targets_and_anchors(text: str) -> tuple[list[str], dict[str, list[s
 def _clean_optional_field(pattern: re.Pattern[str], text: str) -> str:
     val = clean_md_field(m.group(1)) if (m := pattern.search(text)) else ""
     return "" if val.lower() in EMPTY_FIELD_TOKENS else val
+
+
+def _extract_spec_source(text: str) -> str:
+    if not (m := SPEC_SOURCE_RE.search(text)):
+        return ""
+    raw = m.group(1).strip()
+    if lm := re.search(r"\[[^\]]*\]\(([^)\s]+)\)", raw):
+        cand = lm.group(1).strip().strip("`")
+    else:
+        cand = clean_md_field(raw)
+    cand = cand.replace("\\", "/").strip()
+    while cand.startswith("./"):
+        cand = cand[2:]
+    return "" if cand.lower() in EMPTY_FIELD_TOKENS else cand
+
+
+def _extract_acceptance_criteria(text: str) -> list[str]:
+    if not (m := AC_LINE_RE.search(text)):
+        return []
+    raw = re.sub(r"\*?\([^)]*\)\*?", "", m.group(1)).strip()
+    out: list[str] = []
+    for part in re.split(r"[,;]", raw):
+        tok = part.strip("`* ").strip()
+        if tok and tok.lower() not in EMPTY_FIELD_TOKENS and tok not in out:
+            out.append(tok)
+    return out
 
 
 def parse_artifact_file(path: Path, concept_root: Path) -> dict:
@@ -609,8 +570,6 @@ def parse_artifact_file(path: Path, concept_root: Path) -> dict:
             if dep and dep not in dependencies:
                 dependencies.append(dep)
 
-    expected_branch = _clean_optional_field(BRANCH_LINE_RE, text)
-    workflow_profile = _clean_optional_field(PROFILE_LINE_RE, text)
     target_files, anchors = _extract_targets_and_anchors(text)
     out: dict = {
         "id": path.stem,
@@ -620,12 +579,17 @@ def parse_artifact_file(path: Path, concept_root: Path) -> dict:
         "date": date_match.group(1) if date_match else None,
         "status": clean_md_field(status_match.group(1)) if status_match else "unknown",
         "target_project": target_project,
-        "expected_branch": expected_branch,
+        "expected_branch": _clean_optional_field(BRANCH_LINE_RE, text),
         "wave": wave,
         "dependencies": dependencies,
-        "workflow_profile": workflow_profile,
+        "workflow_profile": _clean_optional_field(PROFILE_LINE_RE, text),
         "target_files": target_files,
         "anchors": anchors,
+        "task_id": _clean_optional_field(TASK_ID_RE, text),
+        "spec_id": _clean_optional_field(SPEC_ID_RE, text),
+        "spec_source": _extract_spec_source(text),
+        "acceptance_criteria": _extract_acceptance_criteria(text),
+        "wave_name": _clean_optional_field(WAVE_NAME_RE, text),
     }
     if wave_raw is not None:
         out["wave_raw"] = wave_raw
@@ -641,10 +605,12 @@ def scan_md_dir(directory: Path, concept_root: Path) -> list[dict]:
 
 def collect_concept_artifacts(concept_root: Path) -> dict:
     """Inventorie specs/, specs/archive/, tasks/ et tasks/archive/ sans les _TEMPLATE.md."""
-    specs_dir, tasks_dir = concept_root / "specs", concept_root / "tasks"
+    specs_dir, tasks_dir, handoffs_dir = concept_root / "specs", concept_root / "tasks", concept_root / "handoffs"
     return {
         "specs": scan_md_dir(specs_dir, concept_root),
         "archived_specs": scan_md_dir(specs_dir / "archive", concept_root),
         "pending_tasks": scan_md_dir(tasks_dir, concept_root),
         "archived_tasks": scan_md_dir(tasks_dir / "archive", concept_root),
+        "pending_handoffs": scan_md_dir(handoffs_dir, concept_root),
+        "archived_handoffs": scan_md_dir(handoffs_dir / "archive", concept_root),
     }

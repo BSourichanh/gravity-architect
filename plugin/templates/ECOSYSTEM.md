@@ -3,7 +3,7 @@
 <!-- AUTO:START:ecosystem-meta -->
 - **Espace de conception :** atelier courant *(lecture seule stricte sur les dépôts suivis)*
 - **Dernier snapshot :** [`tracking/snapshots/ecosystem_snapshot.md`](tracking/snapshots/ecosystem_snapshot.md)
-- **Charte :** [`AGENTS.md`](AGENTS.md) · **Archives :** [`archives/README.md`](archives/README.md)
+- **Charte :** [`AGENTS.md`](AGENTS.md)
 <!-- AUTO:END:ecosystem-meta -->
 
 ---

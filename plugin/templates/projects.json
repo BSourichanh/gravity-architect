@@ -2,7 +2,6 @@
   "schema_version": 5,
   "workspace_name": "Mon Atelier Projets",
   "default_preset": "generic",
-  "post_commit_install_cmd": null,
   "privacy": {
     "public_mode": false
   },

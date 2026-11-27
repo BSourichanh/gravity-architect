@@ -22,7 +22,8 @@ PLUGIN_SCRIPTS = PLUGIN_ROOT / "scripts"
 sys.path.insert(0, str(PLUGIN_ROOT))
 sys.path.insert(0, str(PLUGIN_SCRIPTS))
 
-from core import io_utils  # noqa: E402
+from core import renderers  # noqa: E402
+import init_workspace  # noqa: E402
 import sync_tracking  # noqa: E402
 
 
@@ -390,7 +391,6 @@ class TestSyncTracking(unittest.TestCase):
             (repo / ".agents").mkdir()
             (repo / ".agents" / "state.json").write_text("{}\n", encoding="utf-8")
 
-            changelogs_dir = tmp_path / "archives" / "changelogs"
             cfg = {
                 "id": "demo",
                 "name": "Demo",
@@ -405,7 +405,6 @@ class TestSyncTracking(unittest.TestCase):
             snap = sync_tracking.collect_project_snapshot(
                 cfg,
                 base_dir=tmp_path,
-                changelogs_dir=changelogs_dir,
                 installed_plugins_map={"demo": {"name": "demo", "version": "0.1.0"}},
                 concept_root=tmp_path,
             )
@@ -417,12 +416,14 @@ class TestSyncTracking(unittest.TestCase):
             self.assertEqual(snap["stable"]["latest_tag"], "v0.1.0")
             self.assertEqual(snap["stable"]["branches"]["dev_ahead_of_main"], 1)
             self.assertEqual(snap["wip"]["code_wip_count"], 1)
+            self.assertEqual(snap["stable"]["changelog_path"], "CHANGELOG.md")
+            self.assertIsNone(snap["stable"]["changelog_archive"])
+            self.assertFalse((tmp_path / "archives").exists())
 
             (repo / "tracked.txt").unlink()
             snap_rt = sync_tracking.collect_project_snapshot(
                 cfg,
                 base_dir=tmp_path,
-                changelogs_dir=changelogs_dir,
                 concept_root=tmp_path,
             )
             self.assertEqual(snap_rt["wip"]["code_wip_count"], 0)
@@ -431,7 +432,6 @@ class TestSyncTracking(unittest.TestCase):
             missing = sync_tracking.collect_project_snapshot(
                 {"id": "absent", "path": "./does-not-exist"},
                 base_dir=tmp_path,
-                changelogs_dir=changelogs_dir,
                 concept_root=tmp_path,
             )
             self.assertFalse(missing["exists"])
@@ -474,7 +474,7 @@ class TestSyncTracking(unittest.TestCase):
                 "default_dev_branch": "dev",
             }
             snap_merged = sync_tracking.collect_project_snapshot(
-                cfg, base_dir=root, changelogs_dir=root / "archives" / "changelogs", concept_root=root
+                cfg, base_dir=root, concept_root=root
             )
             self.assertTrue(snap_merged["stable"]["branches"]["latest_tag_on_main"])
             self.assertEqual(snap_merged["stable"]["branches"]["commits_since_latest_tag"], 0)
@@ -484,7 +484,7 @@ class TestSyncTracking(unittest.TestCase):
             _git(repo, "add", "-A")
             _git(repo, "commit", "-m", "feat: post-tag work")
             snap_after = sync_tracking.collect_project_snapshot(
-                cfg, base_dir=root, changelogs_dir=root / "archives" / "changelogs", concept_root=root
+                cfg, base_dir=root, concept_root=root
             )
             self.assertEqual(snap_after["stable"]["branches"]["commits_since_latest_tag"], 1)
 
@@ -528,7 +528,6 @@ class TestSyncTracking(unittest.TestCase):
             snap = sync_tracking.collect_project_snapshot(
                 cfg,
                 base_dir=root,
-                changelogs_dir=root / "archives" / "changelogs",
                 installed_plugins_map=installed_map,
                 concept_root=root,
                 default_preset="antigravity-plugin",
@@ -540,7 +539,6 @@ class TestSyncTracking(unittest.TestCase):
             snap2 = sync_tracking.collect_project_snapshot(
                 cfg,
                 base_dir=root,
-                changelogs_dir=root / "archives" / "changelogs",
                 installed_plugins_map=installed_map,
                 concept_root=root,
                 default_preset="antigravity-plugin",
@@ -598,7 +596,7 @@ class TestSyncTracking(unittest.TestCase):
             arts = sync_tracking.collect_concept_artifacts(root)
             self.assertEqual(len(arts["specs"]), 1)
             self.assertEqual(len(arts["pending_tasks"]), 2)
-            self.assertNotIn("pending_handoffs", arts)
+            self.assertEqual(arts["pending_handoffs"], [])
 
             task = arts["pending_tasks"][1]
             self.assertEqual(task["id"], "2026-11-22-alpha-demo")
@@ -1041,7 +1039,7 @@ class TestSyncTracking(unittest.TestCase):
             )
             card_tpl = (
                 "# Demo\n<!-- AUTO:START:project-meta:demo -->\n<!-- AUTO:END:project-meta:demo -->\n"
-                "<!-- AUTO:START:project-tasks:demo -->\n<!-- AUTO:END:project-tasks:demo -->\n"
+                "<!-- AUTO:START:project-handoffs:demo -->\n<!-- AUTO:END:project-handoffs:demo -->\n"
             )
 
             base_cfg = {
@@ -1518,29 +1516,26 @@ class TestSyncTracking(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             arch_home = root / "arch-home"
-            reg_path = io_utils.resolve_ateliers_registry_path(architect_home=arch_home)
+            reg_path = sync_tracking.resolve_ateliers_registry_path(architect_home=arch_home)
             self.assertEqual(reg_path, arch_home.resolve() / "ateliers.json")
 
-            # Opt-out GRAVITY_ARCHITECT_SKIP_REGISTRY=1
             ws_a = _make_atelier(root, "ws-a", name="Atelier A")
             self.assertFalse(
-                io_utils.register_atelier(
+                sync_tracking.register_atelier(
                     ws_a, architect_home=arch_home, env={"GRAVITY_ARCHITECT_SKIP_REGISTRY": "1"}
                 )
             )
             self.assertFalse(reg_path.exists())
 
-            # Rejet si marqueurs absents ou non-dossier
             incomplete = root / "incomplete"
             incomplete.mkdir()
             (incomplete / "projects.json").write_text("{}\n", encoding="utf-8")
-            self.assertFalse(io_utils.register_atelier(incomplete, architect_home=arch_home, env={}))
+            self.assertFalse(sync_tracking.register_atelier(incomplete, architect_home=arch_home, env={}))
             not_dir = root / "file.txt"
             not_dir.write_text("x\n", encoding="utf-8")
-            self.assertFalse(io_utils.register_atelier(not_dir, architect_home=arch_home, env={}))
+            self.assertFalse(sync_tracking.register_atelier(not_dir, architect_home=arch_home, env={}))
 
-            # Création schema_version=1, lecture workspace_name depuis projects.json et format UTC
-            self.assertTrue(io_utils.register_atelier(ws_a, architect_home=arch_home, env={}))
+            self.assertTrue(sync_tracking.register_atelier(ws_a, architect_home=arch_home, env={}))
             payload1 = json.loads(reg_path.read_text(encoding="utf-8"))
             self.assertEqual(payload1["schema_version"], 1)
             self.assertEqual(len(payload1["ateliers"]), 1)
@@ -1548,10 +1543,9 @@ class TestSyncTracking(unittest.TestCase):
             self.assertEqual(payload1["ateliers"][0]["workspace_name"], "Atelier A")
             self.assertRegex(payload1["ateliers"][0]["updated_at"], r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$")
 
-            # Ordre MRU & déduplication
             ws_b = _make_atelier(root, "ws-b", name="Atelier B")
-            self.assertTrue(io_utils.register_atelier(ws_b, architect_home=arch_home, env={}))
-            self.assertTrue(io_utils.register_atelier(ws_a, workspace_name="Atelier A2", architect_home=arch_home, env={}))
+            self.assertTrue(sync_tracking.register_atelier(ws_b, architect_home=arch_home, env={}))
+            self.assertTrue(sync_tracking.register_atelier(ws_a, workspace_name="Atelier A2", architect_home=arch_home, env={}))
             payload2 = json.loads(reg_path.read_text(encoding="utf-8"))
             self.assertEqual(
                 [a["workspace_path"] for a in payload2["ateliers"]],
@@ -1559,20 +1553,18 @@ class TestSyncTracking(unittest.TestCase):
             )
             self.assertEqual(payload2["ateliers"][0]["workspace_name"], "Atelier A2")
 
-            # Nettoyage paresseux des entrées obsolètes (ECOSYSTEM.md supprimé)
             (ws_b / "ECOSYSTEM.md").unlink()
             ws_c = _make_atelier(root, "ws-c", name="Atelier C")
-            self.assertTrue(io_utils.register_atelier(ws_c, architect_home=arch_home, env={}))
+            self.assertTrue(sync_tracking.register_atelier(ws_c, architect_home=arch_home, env={}))
             payload3 = json.loads(reg_path.read_text(encoding="utf-8"))
             self.assertEqual(
                 [a["workspace_path"] for a in payload3["ateliers"]],
                 [str(ws_c.resolve()), str(ws_a.resolve())],
             )
 
-            # Plafond à MAX_REGISTERED_ATELIERS = 20
             all_ws = [_make_atelier(root, f"cap-{i:02d}", name=f"Cap {i}") for i in range(22)]
             for w in all_ws:
-                self.assertTrue(io_utils.register_atelier(w, architect_home=arch_home, env={}))
+                self.assertTrue(sync_tracking.register_atelier(w, architect_home=arch_home, env={}))
             payload_cap = json.loads(reg_path.read_text(encoding="utf-8"))
             self.assertEqual(len(payload_cap["ateliers"]), 20)
             self.assertEqual(payload_cap["ateliers"][0]["workspace_path"], str(all_ws[-1].resolve()))
@@ -1580,38 +1572,34 @@ class TestSyncTracking(unittest.TestCase):
             self.assertNotIn(str(all_ws[0].resolve()), cap_paths)
             self.assertNotIn(str(all_ws[1].resolve()), cap_paths)
 
-            # Récupération sur ateliers.json corrompu
             reg_path.write_text("{corrupt json", encoding="utf-8")
-            self.assertTrue(io_utils.register_atelier(ws_a, architect_home=arch_home, env={}))
+            self.assertTrue(sync_tracking.register_atelier(ws_a, architect_home=arch_home, env={}))
             recovered = json.loads(reg_path.read_text(encoding="utf-8"))
             self.assertEqual(recovered["schema_version"], 1)
             self.assertEqual([a["workspace_path"] for a in recovered["ateliers"]], [str(ws_a.resolve())])
 
-            # Rejet symlinks (cible atelier, fichier marqueur, architect_home, ateliers.json)
             sym_ws = root / "sym-ws"
             sym_ws.symlink_to(ws_a, target_is_directory=True)
-            self.assertFalse(io_utils.register_atelier(sym_ws, architect_home=arch_home, env={}))
+            self.assertFalse(sync_tracking.register_atelier(sym_ws, architect_home=arch_home, env={}))
 
             ws_sym_file = root / "ws-sym-file"
             ws_sym_file.mkdir()
             (ws_sym_file / "projects.json").write_text("{}\n", encoding="utf-8")
             (ws_sym_file / "ECOSYSTEM.md").symlink_to(ws_a / "ECOSYSTEM.md")
-            self.assertFalse(io_utils.register_atelier(ws_sym_file, architect_home=arch_home, env={}))
+            self.assertFalse(sync_tracking.register_atelier(ws_sym_file, architect_home=arch_home, env={}))
 
             sym_arch = root / "sym-arch"
             sym_arch.symlink_to(arch_home, target_is_directory=True)
-            self.assertFalse(io_utils.register_atelier(ws_a, architect_home=sym_arch, env={}))
+            self.assertFalse(sync_tracking.register_atelier(ws_a, architect_home=sym_arch, env={}))
 
             arch_sym_file = root / "arch-sym-file"
             arch_sym_file.mkdir()
             (arch_sym_file / "ateliers.json").symlink_to(reg_path)
-            self.assertFalse(io_utils.register_atelier(ws_a, architect_home=arch_sym_file, env={}))
+            self.assertFalse(sync_tracking.register_atelier(ws_a, architect_home=arch_sym_file, env={}))
 
-            # Best-effort sur erreur d'écriture
-            with mock.patch.object(io_utils, "write_utf8", side_effect=OSError("disk full")):
-                self.assertFalse(io_utils.register_atelier(ws_a, architect_home=arch_home, env={}))
+            with mock.patch.object(sync_tracking, "write_json_atomic", side_effect=OSError("disk full")):
+                self.assertFalse(sync_tracking.register_atelier(ws_a, architect_home=arch_home, env={}))
 
-            # Invariant CLI : resolve_workspace_root() ne se replie jamais sur ateliers.json
             empty_cwd = root / "empty-cwd"
             empty_cwd.mkdir()
             with self.assertRaises(FileNotFoundError):
@@ -1621,7 +1609,7 @@ class TestSyncTracking(unittest.TestCase):
                     home_dir=root / "isolated-home",
                 )
 
-    def test_run_sync_registers_atelier_only_when_not_dry_run(self) -> None:
+    def test_run_sync_registers_atelier_only_when_not_dry_run_and_locks_externally(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             ws = root / "atelier"
@@ -1653,13 +1641,30 @@ class TestSyncTracking(unittest.TestCase):
             reg_path = self._arch_home / "ateliers.json"
             sync_tracking.run_sync(config_path=cfg_path, concept_root=ws, offline=True, dry_run=True)
             self.assertFalse(reg_path.exists())
+            self.assertFalse((self._arch_home / "locks").exists())
 
             sync_tracking.run_sync(config_path=cfg_path, concept_root=ws, offline=True, dry_run=False)
             self.assertTrue(reg_path.is_file())
+            self.assertEqual(list(ws.glob("*.lock")), [])
+            self.assertTrue((self._arch_home / "locks").is_dir())
             data = json.loads(reg_path.read_text(encoding="utf-8"))
             self.assertEqual(len(data["ateliers"]), 1)
             self.assertEqual(data["ateliers"][0]["workspace_path"], str(ws.resolve()))
             self.assertEqual(data["ateliers"][0]["workspace_name"], "Atelier Sync")
+
+            lock_file = sync_tracking.workspace_lock_path(ws)
+            orig_lock = sync_tracking.exclusive_file_lock
+            with orig_lock(lock_file, timeout_s=1.0):
+                with mock.patch.object(
+                    sync_tracking,
+                    "exclusive_file_lock",
+                    side_effect=lambda p, timeout_s=5.0: orig_lock(p, timeout_s=0.05),
+                ):
+                    with self.assertRaises(TimeoutError):
+                        sync_tracking.run_sync(config_path=cfg_path, concept_root=ws, offline=True, dry_run=False)
+                    with contextlib.redirect_stderr(io.StringIO()):
+                        rc_locked = sync_tracking.main(["--config", str(cfg_path), "--concept-root", str(ws), "--offline"])
+                    self.assertEqual(rc_locked, 1)
 
     def test_int07_collect_atelier_hygiene_alerts_and_run_sync(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -1670,23 +1675,16 @@ class TestSyncTracking(unittest.TestCase):
             (ws / "tracking" / "projects").mkdir(parents=True)
             (ws / "tracking" / "antigravity").mkdir(parents=True)
             (ws / "tracking" / "snapshots").mkdir(parents=True)
-            (ws / "archives").mkdir(parents=True)
-            (ws / "archives" / "README.md").write_text("# Archives\n", encoding="utf-8")
             (ws / "tracking" / "snapshots" / "ecosystem_snapshot.md").write_text("# Snap\n", encoding="utf-8")
 
             tpl_dir = PLUGIN_ROOT / "templates"
-            # CRLF seul sur un _TEMPLATE.md ne doit pas déclencher de dérive (comparaison LF normalisée)
             spec_lf = (tpl_dir / "spec-template.md").read_text(encoding="utf-8").replace("\r\n", "\n")
             (ws / "specs" / "_TEMPLATE.md").write_bytes(spec_lf.replace("\n", "\r\n").encode("utf-8"))
-            # Dérive réelle sur tasks/_TEMPLATE.md
             (ws / "tasks" / "_TEMPLATE.md").write_text("# Modifié\n", encoding="utf-8")
-
-            # _TEMPLATE.md dans tracking/projects/ doit être ignoré pour le contrôle de liens
             (ws / "tracking" / "projects" / "_TEMPLATE.md").write_text(
                 (tpl_dir / "project-card-template.md").read_text(encoding="utf-8"),
                 encoding="utf-8",
             )
-            # Liens dans blocs ``` et code inline ignorés ; lien cassé et file: signalés
             (ws / "AGENTS.md").write_text(
                 "# Agents\n"
                 "```markdown\n[ignored](does/not/exist.md)\n```\n"
@@ -1715,12 +1713,11 @@ class TestSyncTracking(unittest.TestCase):
             self.assertIn("tasks/_TEMPLATE.md", joined)
             self.assertNotIn("does/not/exist.md", joined)
             self.assertNotIn("nope.md", joined)
-            self.assertNotIn("<id>-CHANGELOG.md", joined)
+            self.assertNotIn("CHANGELOG.md", joined)
             self.assertIn("missing/target.md", joined)
             self.assertIn("file:///etc/passwd", joined)
             self.assertIn("2026-01-01-missing.md", joined)
 
-            # Dépassement budget AGENTS.md + intégration non bloquante dans run_sync
             (ws / "AGENTS.md").write_text("# Agents\n" + ("x" * 2600), encoding="utf-8")
             cfg_path = ws / "projects.json"
             cfg_path.write_text(
@@ -1732,6 +1729,84 @@ class TestSyncTracking(unittest.TestCase):
             self.assertIn("AGENTS.md", d_joined)
             self.assertIn("tasks/_TEMPLATE.md", d_joined)
             self.assertIn("missing/target.md", d_joined)
+            self.assertFalse((ws / "archives").exists())
+
+    def test_project_card_direct_changelog_links_and_public_mode(self) -> None:
+        base_proj = {
+            "id": "demo",
+            "name": "Demo",
+            "path": "../demo",
+            "role": "Test",
+            "preset": "generic",
+            "default_dev_branch": "dev",
+            "exists": True,
+            "stable": {
+                "has_changelog": True,
+                "changelog_path": "CHANGELOG.md",
+                "version": "0.1.0",
+                "branches": {"dev_branch": "dev", "main_branch": "main", "main_latest_tag": "v0.1.0", "main_head": "abc", "dev_head": "abc"},
+            },
+            "wip": {"code_wip_count": 0, "runtime_only_wip": False},
+        }
+        body_rel = renderers._build_project_card_meta_body(base_proj, "2026-11-26", effective_public=False)
+        self.assertIn("[`CHANGELOG.md`](../../../demo/CHANGELOG.md)", body_rel)
+
+        body_pub = renderers._build_project_card_meta_body(base_proj, "2026-11-26", effective_public=True)
+        self.assertIn("— `CHANGELOG.md`", body_pub)
+        self.assertNotIn("../../../demo/CHANGELOG.md", body_pub)
+
+        abs_proj = {**base_proj, "path": "/abs/path/demo"}
+        body_abs = renderers._build_project_card_meta_body(abs_proj, "2026-11-26", effective_public=False)
+        self.assertIn("— `CHANGELOG.md`", body_abs)
+        self.assertNotIn("/abs/path/demo", body_abs)
+
+        win_rel_proj = {**base_proj, "display_path": "..\\repo4", "path": "/abs/resolved/repo4"}
+        body_win_rel = renderers._build_project_card_meta_body(win_rel_proj, "2026-11-26", effective_public=False)
+        self.assertIn("[`CHANGELOG.md`](../../../repo4/CHANGELOG.md)", body_win_rel)
+
+        win_abs_proj = {**base_proj, "display_path": "C:\\abs\\repo4", "path": "C:\\abs\\repo4"}
+        body_win_abs = renderers._build_project_card_meta_body(win_abs_proj, "2026-11-26", effective_public=False)
+        self.assertIn("— `CHANGELOG.md`", body_win_abs)
+        self.assertNotIn("C:/abs/repo4", body_win_abs)
+
+    def test_e2e_init_workspace_run_sync_direct_changelog_links_and_public_mode(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            repo4 = root / "repo4"
+            _init_demo_repo(repo4)
+
+            ws_priv = root / "ws-priv"
+            init_workspace.init_workspace(
+                ws_priv,
+                name="Atelier Priv",
+                projects=[("repo4", "../repo4", repo4)],
+                public_mode=False,
+            )
+            snapshot_priv, _ = sync_tracking.run_sync(
+                config_path=ws_priv / "projects.json",
+                concept_root=ws_priv,
+                offline=True,
+            )
+            self.assertEqual(snapshot_priv["projects"][0]["display_path"], "../repo4")
+            self.assertEqual(snapshot_priv["projects"][0]["path"], str(repo4.resolve()))
+            card_priv = (ws_priv / "tracking" / "projects" / "repo4.md").read_text(encoding="utf-8")
+            self.assertIn("[`CHANGELOG.md`](../../../repo4/CHANGELOG.md)", card_priv)
+
+            ws_pub = root / "ws-pub"
+            init_workspace.init_workspace(
+                ws_pub,
+                name="Atelier Pub",
+                projects=[("repo4", "../repo4", repo4)],
+                public_mode=True,
+            )
+            sync_tracking.run_sync(
+                config_path=ws_pub / "projects.json",
+                concept_root=ws_pub,
+                offline=True,
+            )
+            card_pub = (ws_pub / "tracking" / "projects" / "repo4.md").read_text(encoding="utf-8")
+            self.assertIn("— `CHANGELOG.md`", card_pub)
+            self.assertNotIn("../../../repo4/CHANGELOG.md", card_pub)
 
 
 if __name__ == "__main__":

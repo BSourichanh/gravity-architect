@@ -9,5 +9,4 @@ __all__ = [
     "io_utils",
     "renderers",
     "watches",
-    "waves",
 ]

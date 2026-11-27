@@ -15,4 +15,4 @@
 - *(Synthétiser ici les évolutions impactant nos plugins, skills, hooks ou workflows.)*
 
 ## 2. Actions de mise à niveau retenues
-- *(Lister les adaptations à planifier ou transformer en `specs/` / `tasks/`.)*
+- *(Lister les adaptations à planifier ou transformer en `specs/` / `handoffs/`.)*

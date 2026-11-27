@@ -55,7 +55,7 @@ class TestCoreStructureAndFacades(unittest.TestCase):
 
         for rel in ("hooks.json", "hooks/pre_invocation_architect.py", "scripts/atelier_status.py"):
             fpath = PLUGIN_ROOT / rel
-            self.assertTrue(fpath.is_file(), f"Fichier Wave 2 manquant : {fpath}")
+            self.assertTrue(fpath.is_file(), f"Fichier manquant : {fpath}")
             raw = fpath.read_bytes()
             self.assertFalse(raw.startswith(b"\xef\xbb\xbf"), f"BOM détecté dans {rel}")
             self.assertNotIn(b"\r\n", raw, f"CRLF détecté dans {rel}")
@@ -73,7 +73,8 @@ class TestCoreStructureAndFacades(unittest.TestCase):
             "fetch_url_text", "fetch_antigravity_changelog", "render_surface_markdown",
             "render_ecosystem_snapshot_markdown", "compute_delta_with_state", "compute_delta",
             "render_delta_markdown", "format_delta_for_stdout", "replace_auto_block",
-            "apply_auto_doc_updates", "run_sync", "build_parser", "main", "register_atelier",
+            "apply_auto_doc_updates", "run_sync", "build_parser", "main",
+            "register_atelier", "resolve_ateliers_registry_path", "workspace_lock_path",
             "collect_atelier_hygiene_alerts", "_parse_semver_tuple", "_compare_cli_versions",
             "_build_ecosystem_blocks", "_format_project_tasks_block", "shutil", "datetime",
         )
@@ -83,6 +84,7 @@ class TestCoreStructureAndFacades(unittest.TestCase):
         init_expected = (
             "PROJECT_ID_RE", "PRODUCT_MANIFEST_FILES", "ANTIGRAVITY_CHANGELOG_URL",
             "ANTIGRAVITY_IMPACT_BUDGET", "ANTIGRAVITY_WATCH_SURFACES",
+            "DEFAULT_WORKSPACE_NAME", "_derive_default_workspace_name",
             "inspect_project_dir", "discover_repositories", "init_workspace",
             "add_projects_to_workspace", "build_parser", "main", "register_atelier",
             "_deploy_file", "_compute_portable_path", "_parse_target_spec",
@@ -111,19 +113,16 @@ class TestCoreStructureAndFacades(unittest.TestCase):
             self.assertEqual(rc, 0)
             for fname in CORE_MODULES:
                 self.assertTrue((target / "core" / fname).is_file(), f"core/{fname} non copié par install.py")
-            self.assertTrue(
-                (target / "skills" / "gravity-architect" / "references" / "workflows-and-hygiene.md").is_file(),
-                "references/workflows-and-hygiene.md non copié par install.py",
-            )
-            self.assertTrue((target / "hooks.json").is_file(), "hooks.json non copié par install.py")
-            self.assertTrue(
-                (target / "hooks" / "pre_invocation_architect.py").is_file(),
-                "hooks/pre_invocation_architect.py non copié par install.py",
-            )
-            self.assertTrue(
-                (target / "scripts" / "atelier_status.py").is_file(),
-                "scripts/atelier_status.py non copié par install.py",
-            )
+            for rel in (
+                "skills/gravity-architect/references/workflows-and-hygiene.md",
+                "hooks.json",
+                "hooks/pre_invocation_architect.py",
+                "scripts/atelier_status.py",
+                "_shared/atomic_io.py",
+                "_shared/file_lock.py",
+                "_shared/path_safety.py",
+            ):
+                self.assertTrue((target / rel).is_file(), f"{rel} non copié par install.py")
 
         manifest = json.loads((PLUGIN_ROOT / "plugin.json").read_text(encoding="utf-8"))
         self.assertEqual(manifest["version"], "0.5.1")

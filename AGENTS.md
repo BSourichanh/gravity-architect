@@ -1,7 +1,7 @@
 # Gravity Architect — Instructions Agents
 
 ## Périmètre & Architecture
-Plugin Antigravity générique d'atelier de conception, specs, tasks et suivi multi-projets lecture seule (Hot / Cold) :
+Plugin Antigravity générique d'atelier de conception, specs, handoffs et suivi multi-projets lecture seule (Hot / Cold) :
 - `plugin/` : moteur autonome (`plugin.json` 9 champs, `config/module.json`, `core/`, `skills/`, `rules/AGENTS.md`, `templates/`, `scripts/{sync_tracking,init_workspace,validate}.py`, `assets/`).
 - `install.py` : installeur cross-platform ; `tests/` : suite `unittest`.
 - **Stockage :** `default_architect_home()` (`$GRAVITY_ARCHITECT_HOME` > `$GRAVITY_HOME/architect` > `~/.gemini/gravity/architect`) ; `--workspace` / `$GRAVITY_ARCHITECT_WORKSPACE` / `.` préservés. Aucun atelier privé suivi par Git.

@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import json
 from pathlib import Path
+import re
 import sys
 from typing import Any
 
@@ -15,11 +16,18 @@ if str(PLUGIN_ROOT) not in sys.path:
 
 from core.delta import collect_atelier_hygiene_alerts, evaluate_hot_budgets  # noqa: E402
 from core.io_utils import (  # noqa: E402
+    ARTIFACT_FILE_SECTIONS,
+    _clean_bullet_item,
+    _looks_like_file_path,
     collect_concept_artifacts,
     configure_utf8_stdio,
+    normalize_target_file,
     read_json_safe,
     resolve_workspace_root,
 )
+
+STALE_SPEC_STATUSES = frozenset({"superseded", "archived", "done", "cancelled"})
+_NEW_FILE_MARKER_RE = re.compile(r"\b(?:new\s+file|nouveau\s+fichier)\b", re.IGNORECASE)
 
 
 def _summarize_tasks(pending_tasks: list[dict[str, Any]]) -> tuple[dict[str, dict[str, int]], dict[str, int]]:
@@ -88,6 +96,142 @@ def _build_suggested_actions(
     return actions
 
 
+def _extract_new_file_targets(task: dict[str, Any], ws_root: Path) -> list[str]:
+    preset = task.get("new_file_targets")
+    if isinstance(preset, list):
+        return [nf for raw in preset if (nf := normalize_target_file(str(raw)))]
+    rel_path = str(task.get("rel_path") or "").strip()
+    if not rel_path:
+        return []
+    task_file = ws_root / rel_path
+    if not task_file.is_file():
+        return []
+    try:
+        text = task_file.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return []
+    in_section = False
+    out: list[str] = []
+    for line in text.splitlines():
+        if hm := re.match(r"^#{1,2}\s+(.+?)\s*$", line):
+            in_section = line.startswith("## ") and hm.group(1).strip().lower() in ARTIFACT_FILE_SECTIONS
+            continue
+        if not in_section or not _NEW_FILE_MARKER_RE.search(line):
+            continue
+        if bm := re.match(r"^\s*[-*+]\s+(.+?)\s*$", line):
+            item = _clean_bullet_item(bm.group(1))
+            nf = normalize_target_file(item)
+            if _looks_like_file_path(nf) and nf not in out:
+                out.append(nf)
+    return out
+
+
+def _detect_stale_ready_tasks(
+    ws_root: Path, cfg: dict[str, Any], artifacts: dict[str, Any]
+) -> list[str]:
+    """Détecte de façon déterministe (`AUD-05-09`) les tasks `ready` périmées ou déjà livrées (RO strict)."""
+    specs = artifacts.get("specs") or []
+    archived_specs = artifacts.get("archived_specs") or []
+    pending_tasks = artifacts.get("pending_tasks") or []
+
+    active_by_key: dict[str, dict[str, Any]] = {}
+    active_by_id: dict[str, dict[str, Any]] = {}
+    for sp in specs:
+        if not isinstance(sp, dict):
+            continue
+        if rel := normalize_target_file(str(sp.get("rel_path") or "")):
+            active_by_key[rel] = sp
+        if fname := str(sp.get("filename") or "").strip():
+            active_by_key.setdefault(f"specs/{fname}", sp)
+            active_by_key.setdefault(fname, sp)
+        if sid := str(sp.get("spec_id") or "").strip():
+            active_by_id[sid] = sp
+
+    archived_by_key: dict[str, dict[str, Any]] = {}
+    archived_by_id: dict[str, dict[str, Any]] = {}
+    for sp in archived_specs:
+        if not isinstance(sp, dict):
+            continue
+        if rel := normalize_target_file(str(sp.get("rel_path") or "")):
+            archived_by_key[rel] = sp
+        if fname := str(sp.get("filename") or "").strip():
+            archived_by_key.setdefault(f"specs/archive/{fname}", sp)
+            archived_by_key.setdefault(fname, sp)
+        if sid := str(sp.get("spec_id") or "").strip():
+            archived_by_id[sid] = sp
+
+    repo_roots: dict[str, Path] = {}
+    if aid := str(cfg.get("atelier_id") or "").strip():
+        repo_roots[aid] = ws_root
+    repo_roots.setdefault(ws_root.name, ws_root)
+    for item in cfg.get("projects") or []:
+        if isinstance(item, dict) and (pid := str(item.get("id") or "").strip()):
+            if raw_path := str(item.get("path") or "").strip():
+                p = Path(raw_path).expanduser()
+                repo_roots[pid] = p.resolve() if p.is_absolute() else (ws_root / p).resolve()
+
+    changelog_cache: dict[Path, str] = {}
+    alerts: list[str] = []
+    for task in pending_tasks:
+        if not isinstance(task, dict):
+            continue
+        if str(task.get("status") or "").strip().lower() != "ready":
+            continue
+        raw_tid = str(task.get("id") or task.get("filename") or "").strip()
+        tid = raw_tid[:-3] if raw_tid.endswith(".md") else raw_tid
+        spec_src = str(task.get("spec_source") or "").strip()
+        spec_id = str(task.get("spec_id") or "").strip()
+
+        if spec_src:
+            norm_src = normalize_target_file(spec_src)
+            while norm_src.startswith("../"):
+                norm_src = norm_src[3:]
+            if norm_src.startswith("specs/archive/") or norm_src.startswith("archive/") or norm_src in archived_by_key:
+                alerts.append(f"AUD-05-09: task `{tid}` (ready) pointe sur une spec archivée (`{spec_src}`).")
+            else:
+                sp = active_by_key.get(norm_src)
+                if sp is None:
+                    alerts.append(f"AUD-05-09: task `{tid}` (ready) pointe sur une spec introuvable (`{spec_src}`).")
+                else:
+                    sp_status = str(sp.get("status") or "").strip().lower()
+                    if sp_status in STALE_SPEC_STATUSES:
+                        alerts.append(
+                            f"AUD-05-09: task `{tid}` (ready) pointe sur une spec {sp_status} (`{spec_src}`)."
+                        )
+        elif spec_id:
+            if spec_id in archived_by_id:
+                alerts.append(f"AUD-05-09: task `{tid}` (ready) liée à une spec archivée (`{spec_id}`).")
+            elif (sp := active_by_id.get(spec_id)) is not None:
+                sp_status = str(sp.get("status") or "").strip().lower()
+                if sp_status in STALE_SPEC_STATUSES:
+                    alerts.append(f"AUD-05-09: task `{tid}` (ready) liée à une spec {sp_status} (`{spec_id}`).")
+
+        target_proj = str(task.get("target_project") or "").strip()
+        repo_root = repo_roots.get(target_proj)
+        task_id = str(task.get("task_id") or "").strip()
+        if task_id and repo_root is not None:
+            chg_path = repo_root / "CHANGELOG.md"
+            if chg_path.is_file():
+                if chg_path not in changelog_cache:
+                    try:
+                        changelog_cache[chg_path] = chg_path.read_text(encoding="utf-8", errors="replace")
+                    except OSError:
+                        changelog_cache[chg_path] = ""
+                if re.search(rf"(?<![A-Za-z0-9_-]){re.escape(task_id)}(?![A-Za-z0-9_-])", changelog_cache[chg_path]):
+                    alerts.append(
+                        f"AUD-05-09: task `{tid}` (`{task_id}`, ready) déjà livrée dans `{target_proj}/CHANGELOG.md`."
+                    )
+
+        if repo_root is not None and repo_root.is_dir():
+            new_files = _extract_new_file_targets(task, ws_root)
+            if new_files and all((repo_root / nf).is_file() for nf in new_files):
+                alerts.append(
+                    f"AUD-05-09: task `{tid}` (ready) a des ancres nouveau fichier déjà présentes dans `{target_proj}`."
+                )
+
+    return alerts
+
+
 def collect_atelier_status(
     *,
     workspace_arg: Path | None = None,
@@ -114,6 +258,7 @@ def collect_atelier_status(
             "config_path": str(cfg_path) if cfg_path is not None else None,
             "workspace_name": None,
             "projects_count": 0,
+            "projects": [],
             "error": resolve_error or "projects.json absent.",
             "specs": [],
             "pending_tasks": [],
@@ -136,6 +281,7 @@ def collect_atelier_status(
             "config_path": str(cfg_path),
             "workspace_name": ws_root.name,
             "projects_count": 0,
+            "projects": [],
             "error": f"{cfg_path.name} invalide ou illisible.",
             "specs": [],
             "pending_tasks": [],
@@ -170,6 +316,7 @@ def collect_atelier_status(
     hygiene_alerts = collect_atelier_hygiene_alerts(
         ws_root, templates_dir=templates_dir, hot_budgets=hot_budgets
     )
+    hygiene_alerts.extend(_detect_stale_ready_tasks(ws_root, cfg, artifacts))
     ws_name = str(cfg.get("workspace_name") or "").strip() or ws_root.name
 
     return {
@@ -178,6 +325,7 @@ def collect_atelier_status(
         "config_path": str(cfg_path),
         "workspace_name": ws_name,
         "projects_count": len(projects_cfg),
+        "projects": [str(p.get("id") or "") for p in projects_cfg if isinstance(p, dict) and p.get("id")],
         "error": None,
         "specs": specs,
         "pending_tasks": pending_tasks,
@@ -206,6 +354,11 @@ def format_status_markdown(payload: dict[str, Any]) -> str:
             f"(`{payload.get('projects_count', 0)}` projet(s) suivi(s))"
         )
         lines.append(f"- **Chemin :** `{payload.get('workspace')}`")
+        projects = [str(p) for p in (payload.get("projects") or []) if str(p).strip()]
+        if projects:
+            shown_projects = ", ".join(f"`{pid}`" for pid in projects[:10])
+            extra = f" *(+{len(projects) - 10} autre(s))*" if len(projects) > 10 else ""
+            lines.append(f"- **Projets suivis ({len(projects)}) :** {shown_projects}{extra}")
 
         specs = payload.get("specs") or []
         if specs:

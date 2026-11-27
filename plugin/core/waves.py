@@ -1,4 +1,4 @@
-"""Validation fail-closed des vagues d'exécution (`tasks/`), DAG et ancres hybrides."""
+"""Validation fail-closed des vagues d'exécution (`tasks/`), DAG, traçabilité Spec et ancres hybrides."""
 
 from __future__ import annotations
 
@@ -11,6 +11,8 @@ PLUGIN_ROOT = Path(__file__).resolve().parent.parent
 if str(PLUGIN_ROOT) not in sys.path:
     sys.path.insert(0, str(PLUGIN_ROOT))
 
+from _shared.atomic_io import write_json_atomic  # noqa: E402
+from _shared.path_safety import is_symlink_or_junction  # noqa: E402
 from core.io_utils import (  # noqa: E402
     HYBRID_ANCHOR_RE,
     configure_utf8_stdio,
@@ -18,7 +20,6 @@ from core.io_utils import (  # noqa: E402
     normalize_target_file,
     resolve_workspace_root,
     scan_md_dir,
-    write_utf8,
 )
 
 MAX_CODE_FILES_PER_TASK = 5
@@ -45,10 +46,29 @@ def is_non_code_file(path_str: str) -> bool:
     )
 
 
+def _resolve_self_atelier_spec(
+    projects_cfg: dict | list | set | tuple | None, base_dir: Path | None
+) -> dict[str, dict]:
+    """Retourne les entrées projet auto-référencées de l'atelier (`atelier_id` / `base_dir.name`)."""
+    if not isinstance(projects_cfg, dict):
+        return {}
+    dev_default = str(projects_cfg.get("refonte_branch") or "dev").strip() or "dev"
+    self_ids: list[str] = []
+    if aid := str(projects_cfg.get("atelier_id") or "").strip():
+        self_ids.append(aid)
+    if base_dir is not None and base_dir.name and base_dir.name not in self_ids:
+        self_ids.append(base_dir.name)
+    resolved_dir = base_dir.resolve() if base_dir is not None else None
+    return {
+        sid: {"id": sid, "path": ".", "repo_root": resolved_dir, "default_dev_branch": dev_default}
+        for sid in self_ids
+    }
+
+
 def _extract_project_specs(
     projects_cfg: dict | list | set | tuple | None, *, base_dir: Path | None = None
 ) -> dict[str, dict] | None:
-    """Indexe `repo_id -> {id, path, repo_root, default_dev_branch}` depuis `projects.json`."""
+    """Indexe `repo_id -> {id, path, repo_root, default_dev_branch}` depuis `projects.json` (incl. atelier)."""
     if projects_cfg is None:
         return None
     items = projects_cfg.get("projects") or [] if isinstance(projects_cfg, dict) else projects_cfg
@@ -62,20 +82,21 @@ def _extract_project_specs(
                     p = Path(raw_path).expanduser()
                     repo_root = p.resolve() if p.is_absolute() else ((base_dir / p).resolve() if base_dir is not None else p.resolve())
                 dev_branch = str(item.get("default_dev_branch") or "dev").strip() or "dev"
-                specs[pid] = {
-                    "id": pid,
-                    "path": raw_path,
-                    "repo_root": repo_root,
-                    "default_dev_branch": dev_branch,
-                }
+                specs[pid] = {"id": pid, "path": raw_path, "repo_root": repo_root, "default_dev_branch": dev_branch}
         elif isinstance(item, str) and item.strip():
             pid = item.strip()
             specs[pid] = {"id": pid, "path": "", "repo_root": None, "default_dev_branch": "dev"}
+
+    for sid, spec in _resolve_self_atelier_spec(projects_cfg, base_dir).items():
+        specs.setdefault(sid, spec)
     return specs
 
 
-def _extract_known_project_ids(projects_cfg: dict | list | set | tuple | None) -> set[str] | None:
-    specs = _extract_project_specs(projects_cfg)
+def _extract_known_project_ids(
+    projects_cfg: dict | list | set | tuple | None, *, workspace_root: Path | None = None
+) -> set[str] | None:
+    base_dir = workspace_root.expanduser().resolve() if workspace_root is not None else None
+    specs = _extract_project_specs(projects_cfg, base_dir=base_dir)
     return set(specs.keys()) if specs is not None else None
 
 
@@ -101,11 +122,136 @@ def _normalize_task_anchors(raw_anchors: dict | None) -> dict[str, list[str]]:
     return norm_anchors
 
 
-def validate_waves(tasks: list[dict], projects_cfg: dict | list | set | tuple | None = None) -> dict:
-    """Valide un lot de tasks selon les 5 règles fail-closed (vagues, fichiers, DAG, ancres, <= 5 code)."""
+def _is_archived_spec_path(norm_path: str) -> bool:
+    low = norm_path.lower().lstrip("/")
+    return (
+        low.startswith("specs/archive/")
+        or low.startswith("archive/")
+        or "/specs/archive/" in f"/{low}"
+    )
+
+
+def _load_spec_index(
+    workspace_root: Path | None,
+    specs_dir: Path | None,
+    spec_map: dict[str, dict] | None,
+    require_spec: bool | None,
+) -> tuple[bool, Path | None, Path | None, Path | None, dict[str, dict], dict[str, dict]]:
+    ws_resolved = workspace_root.expanduser().resolve() if workspace_root is not None else None
+    resolved_specs_dir = (
+        specs_dir.expanduser().resolve()
+        if specs_dir is not None
+        else ((ws_resolved / "specs") if ws_resolved is not None else None)
+    )
+    active = (
+        require_spec
+        if require_spec is not None
+        else (
+            spec_map is not None
+            or specs_dir is not None
+            or (resolved_specs_dir is not None and resolved_specs_dir.is_dir())
+        )
+    )
+    active_by_key: dict[str, dict] = {}
+    archived_by_key: dict[str, dict] = {}
+    scan_root: Path | None = None
+
+    if not active:
+        return False, ws_resolved, resolved_specs_dir, scan_root, active_by_key, archived_by_key
+
+    if spec_map is not None:
+        for raw_key, sp in spec_map.items():
+            if not isinstance(sp, dict):
+                continue
+            nk = normalize_target_file(str(raw_key))
+            if _is_archived_spec_path(nk):
+                archived_by_key[nk] = sp
+                continue
+            if nk:
+                active_by_key[nk] = sp
+            if rel := normalize_target_file(str(sp.get("rel_path") or "")):
+                if _is_archived_spec_path(rel):
+                    archived_by_key[rel] = sp
+                else:
+                    active_by_key.setdefault(rel, sp)
+            if fname := str(sp.get("filename") or "").strip():
+                active_by_key.setdefault(f"specs/{fname}", sp)
+        return True, ws_resolved, resolved_specs_dir, scan_root, active_by_key, archived_by_key
+
+    if resolved_specs_dir is not None and resolved_specs_dir.is_dir():
+        scan_root = (
+            ws_resolved
+            if (ws_resolved is not None and resolved_specs_dir.is_relative_to(ws_resolved))
+            else resolved_specs_dir.parent
+        )
+        for sp in scan_md_dir(resolved_specs_dir, scan_root):
+            if rel := normalize_target_file(str(sp.get("rel_path") or "")):
+                active_by_key[rel] = sp
+            if fname := str(sp.get("filename") or "").strip():
+                active_by_key.setdefault(f"specs/{fname}", sp)
+        for sp in scan_md_dir(resolved_specs_dir / "archive", scan_root):
+            if rel := normalize_target_file(str(sp.get("rel_path") or "")):
+                archived_by_key[rel] = sp
+            if fname := str(sp.get("filename") or "").strip():
+                archived_by_key.setdefault(f"specs/archive/{fname}", sp)
+
+    return True, ws_resolved, resolved_specs_dir, scan_root, active_by_key, archived_by_key
+
+
+def _resolve_spec_for_task(
+    raw_source: str,
+    *,
+    ws_resolved: Path | None,
+    resolved_specs_dir: Path | None,
+    scan_root: Path | None,
+    active_by_key: dict[str, dict],
+    archived_by_key: dict[str, dict],
+) -> tuple[str, dict | None]:
+    norm = normalize_target_file(raw_source)
+    if not norm:
+        return "missing", None
+    if _is_archived_spec_path(norm) or norm in archived_by_key:
+        return "archived", archived_by_key.get(norm)
+    if norm.startswith("../"):
+        if ws_resolved is not None and resolved_specs_dir is not None and scan_root is not None:
+            cand = (ws_resolved / "tasks" / norm).resolve()
+            archive_dir = (resolved_specs_dir / "archive").resolve()
+            if cand.is_relative_to(archive_dir):
+                return "archived", None
+            if cand.is_relative_to(resolved_specs_dir) and cand.is_file():
+                rel_key = normalize_target_file(cand.relative_to(scan_root).as_posix())
+                if rel_key in active_by_key:
+                    return "active", active_by_key[rel_key]
+            return "missing", None
+        trimmed = norm
+        while trimmed.startswith("../"):
+            trimmed = trimmed[3:]
+        if _is_archived_spec_path(trimmed) or trimmed in archived_by_key:
+            return "archived", archived_by_key.get(trimmed)
+        if trimmed in active_by_key:
+            return "active", active_by_key[trimmed]
+        return "missing", None
+    if norm in active_by_key:
+        return "active", active_by_key[norm]
+    return "missing", None
+
+
+def validate_waves(
+    tasks: list[dict],
+    projects_cfg: dict | list | set | tuple | None = None,
+    *,
+    workspace_root: Path | None = None,
+    specs_dir: Path | None = None,
+    spec_map: dict[str, dict] | None = None,
+    require_spec: bool | None = None,
+) -> dict:
+    """Valide un lot de tasks selon les règles fail-closed (vagues, fichiers, DAG, ancres, <= 5 code, Spec)."""
     errors: list[str] = []
     warnings: list[str] = []
-    known_ids = _extract_known_project_ids(projects_cfg)
+    spec_active, ws_resolved, resolved_specs_dir, scan_root, active_specs, archived_specs = _load_spec_index(
+        workspace_root, specs_dir, spec_map, require_spec
+    )
+    known_ids = _extract_known_project_ids(projects_cfg, workspace_root=ws_resolved)
 
     task_map: dict[str, dict] = {}
     wave_map: dict[str, int] = {}
@@ -176,7 +322,11 @@ def validate_waves(tasks: list[dict], projects_cfg: dict | list | set | tuple | 
             if not any(HYBRID_ANCHOR_RE.search(a) for a in file_anchors):
                 errors.append(f"Task `{tid}` : ancre hybride (`::` ou `~L`) manquante pour le fichier code `{cf}`.")
 
-        deps = [str(d).strip()[:-3] if str(d).strip().endswith(".md") else str(d).strip() for d in (task.get("dependencies") or []) if str(d).strip()]
+        deps = [
+            str(d).strip()[:-3] if str(d).strip().endswith(".md") else str(d).strip()
+            for d in (task.get("dependencies") or [])
+            if str(d).strip()
+        ]
         deps_map[tid] = deps
 
         raw_profile = task.get("workflow_profile")
@@ -187,6 +337,39 @@ def validate_waves(tasks: list[dict], projects_cfg: dict | list | set | tuple | 
             errors.append(
                 f"Task `{tid}` : `workflow_profile` invalide ({profile_str!r}, attendu : quick | standard | deep)."
             )
+
+        if spec_active:
+            task_spec_id = str(task.get("spec_id") or "").strip()
+            if not task_spec_id:
+                errors.append(f"Task `{tid}` : `Spec ID` manquant.")
+            task_spec_src = str(task.get("spec_source") or "").strip()
+            if not task_spec_src:
+                errors.append(f"Task `{tid}` : `Spec source` manquant.")
+            else:
+                kind, spec_obj = _resolve_spec_for_task(
+                    task_spec_src,
+                    ws_resolved=ws_resolved,
+                    resolved_specs_dir=resolved_specs_dir,
+                    scan_root=scan_root,
+                    active_by_key=active_specs,
+                    archived_by_key=archived_specs,
+                )
+                if kind != "active" or spec_obj is None:
+                    errors.append(f"Task `{tid}` : `Spec source` introuvable ou archivée (`{task_spec_src}`).")
+                else:
+                    spec_status = str(spec_obj.get("status") or "unknown").strip()
+                    if spec_status.lower() != "validated":
+                        errors.append(
+                            f"Task `{tid}` : spec `{task_spec_src}` non validée (statut=`{spec_status}`, attendu: `validated`)."
+                        )
+                    spec_spec_id = str(spec_obj.get("spec_id") or "").strip()
+                    if task_spec_id and spec_spec_id and task_spec_id != spec_spec_id:
+                        errors.append(
+                            f"Task `{tid}` : incohérence `Spec ID` (`{task_spec_id}` != `{spec_spec_id}`)."
+                        )
+            ac_raw = task.get("acceptance_criteria")
+            if not isinstance(ac_raw, list) or not any(str(x).strip() for x in ac_raw):
+                errors.append(f"Task `{tid}` : `Acceptance Criteria Covered` manquant ou vide.")
 
     for tid, deps in deps_map.items():
         for dep in deps:
@@ -260,6 +443,9 @@ def export_wave(
     workspace_root: Path,
     projects_cfg: dict | list | None = None,
     tasks_dir: Path | None = None,
+    specs_dir: Path | None = None,
+    spec_map: dict[str, dict] | None = None,
+    require_spec: bool | None = None,
 ) -> dict:
     """Compile une vague validée en manifeste JSON `wave_plan_v1` (fail-closed)."""
     if not isinstance(wave, int) or isinstance(wave, bool) or wave < 1:
@@ -270,7 +456,14 @@ def export_wave(
     if project_specs is None:
         raise ValueError("Configuration `projects.json` manquante pour résoudre `repo_root`.")
 
-    validation = validate_waves(tasks, projects_cfg=projects_cfg)
+    validation = validate_waves(
+        tasks,
+        projects_cfg=projects_cfg,
+        workspace_root=ws_resolved,
+        specs_dir=specs_dir,
+        spec_map=spec_map,
+        require_spec=require_spec,
+    )
     if not validation["ok"]:
         raise ValueError("Validation des vagues échouée : " + " ; ".join(validation["errors"]))
 
@@ -309,9 +502,10 @@ def export_wave(
             if nf and nf not in norm_files:
                 norm_files.append(nf)
 
-        exported_tasks.append({
+        item_out: dict = {
             "id": tid,
             "title": str(task.get("title") or tid).strip() or tid,
+            "spec_id": str(task.get("spec_id") or "").strip(),
             "repo_id": repo_id,
             "repo_root": str(repo_root),
             "expected_branch": expected_branch,
@@ -319,12 +513,18 @@ def export_wave(
             "plan_file": _resolve_task_plan_file(task, tid, workspace_root=ws_resolved, tasks_dir=tasks_dir),
             "target_files": norm_files,
             "status": status_raw or "unknown",
-        })
+        }
+        if t_wname := str(task.get("wave_name") or "").strip():
+            item_out["wave_name"] = t_wname
+        exported_tasks.append(item_out)
 
+    raw_wnames = [str(t.get("wave_name") or "").strip() for _, t in selected]
+    resolved_wave_name = " | ".join(dict.fromkeys(w for w in raw_wnames if w))
     return {
         "schema_version": WAVE_PLAN_SCHEMA_VERSION,
         "workspace": str(ws_resolved),
         "wave": wave,
+        "wave_name": resolved_wave_name,
         "tasks": exported_tasks,
     }
 
@@ -342,6 +542,11 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def _reject_symlink_arg(raw_path: Path | None, label: str) -> None:
+    if raw_path is not None and is_symlink_or_junction(raw_path.expanduser()):
+        raise ValueError(f"Chemin {label} symlink/junction interdit : {raw_path}")
+
+
 def main(argv: list[str] | None = None) -> int:
     """Point d'entrée CLI pour `core/waves.py`."""
     configure_utf8_stdio()
@@ -349,15 +554,25 @@ def main(argv: list[str] | None = None) -> int:
     try:
         if args.out is not None and args.export_wave is None:
             raise ValueError("--out requiert --export-wave <N>.")
+        _reject_symlink_arg(args.workspace, "--workspace")
+        _reject_symlink_arg(args.tasks_dir, "--tasks-dir")
+        _reject_symlink_arg(args.config, "--config")
+        _reject_symlink_arg(args.out, "--out")
 
         if args.tasks_dir is not None:
             tasks_dir = args.tasks_dir.expanduser().resolve()
             concept_root = args.workspace.expanduser().resolve() if args.workspace is not None else tasks_dir.parent
-            cfg_path = args.config.expanduser().resolve() if args.config is not None else (concept_root / "projects.json")
+            raw_cfg = args.config.expanduser() if args.config is not None else (concept_root / "projects.json")
+            if is_symlink_or_junction(raw_cfg):
+                raise ValueError(f"Fichier projects.json symlink/junction interdit : {raw_cfg}")
+            cfg_path = raw_cfg.resolve()
             projects_cfg = load_config(cfg_path) if cfg_path.is_file() else None
         else:
             concept_root, cfg_path = resolve_workspace_root(config_arg=args.config, workspace_arg=args.workspace)
-            tasks_dir = concept_root / "tasks"
+            raw_tasks = concept_root / "tasks"
+            if is_symlink_or_junction(raw_tasks) or is_symlink_or_junction(cfg_path):
+                raise ValueError("Chemin tasks/ ou projects.json symlink/junction interdit.")
+            tasks_dir = raw_tasks
             projects_cfg = load_config(cfg_path) if cfg_path.is_file() else None
 
         scan_root = concept_root if tasks_dir.is_relative_to(concept_root) else tasks_dir.parent
@@ -373,8 +588,11 @@ def main(argv: list[str] | None = None) -> int:
             )
             serialized = json.dumps(payload, indent=2, ensure_ascii=False)
             if args.out is not None:
-                out_path = args.out.expanduser().resolve()
-                write_utf8(out_path, serialized + "\n")
+                raw_out = args.out.expanduser()
+                if is_symlink_or_junction(raw_out) or is_symlink_or_junction(raw_out.parent):
+                    raise ValueError(f"Chemin de sortie symlink/junction interdit : {raw_out}")
+                out_path = raw_out.resolve()
+                write_json_atomic(out_path, payload, indent=2, ensure_ascii=False)
                 if args.json:
                     print(serialized)
                 else:
@@ -383,7 +601,7 @@ def main(argv: list[str] | None = None) -> int:
                 print(serialized)
             return 0
 
-        result = validate_waves(tasks, projects_cfg=projects_cfg)
+        result = validate_waves(tasks, projects_cfg=projects_cfg, workspace_root=concept_root)
     except (OSError, ValueError, json.JSONDecodeError) as exc:
         if args.json:
             print(json.dumps({"ok": False, "errors": [str(exc)], "warnings": [], "task_count": 0, "waves": {}}, ensure_ascii=False))
