@@ -258,6 +258,7 @@ def collect_atelier_status(
             "config_path": str(cfg_path) if cfg_path is not None else None,
             "workspace_name": None,
             "projects_count": 0,
+            "projects": [],
             "error": resolve_error or "projects.json absent.",
             "specs": [],
             "pending_tasks": [],
@@ -280,6 +281,7 @@ def collect_atelier_status(
             "config_path": str(cfg_path),
             "workspace_name": ws_root.name,
             "projects_count": 0,
+            "projects": [],
             "error": f"{cfg_path.name} invalide ou illisible.",
             "specs": [],
             "pending_tasks": [],
@@ -323,6 +325,7 @@ def collect_atelier_status(
         "config_path": str(cfg_path),
         "workspace_name": ws_name,
         "projects_count": len(projects_cfg),
+        "projects": [str(p.get("id") or "") for p in projects_cfg if isinstance(p, dict) and p.get("id")],
         "error": None,
         "specs": specs,
         "pending_tasks": pending_tasks,
@@ -351,6 +354,11 @@ def format_status_markdown(payload: dict[str, Any]) -> str:
             f"(`{payload.get('projects_count', 0)}` projet(s) suivi(s))"
         )
         lines.append(f"- **Chemin :** `{payload.get('workspace')}`")
+        projects = [str(p) for p in (payload.get("projects") or []) if str(p).strip()]
+        if projects:
+            shown_projects = ", ".join(f"`{pid}`" for pid in projects[:10])
+            extra = f" *(+{len(projects) - 10} autre(s))*" if len(projects) > 10 else ""
+            lines.append(f"- **Projets suivis ({len(projects)}) :** {shown_projects}{extra}")
 
         specs = payload.get("specs") or []
         if specs:

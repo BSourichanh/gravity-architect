@@ -74,6 +74,7 @@ class TestAtelierStatus(unittest.TestCase):
                 home_dir=fake_home,
             )
             self.assertFalse(payload["initialized"])
+            self.assertEqual(payload["projects"], [])
             self.assertNotIn("bridge", payload)
             self.assertFalse((fake_home / ".gemini").exists())
             self.assertEqual(list(empty_ws.iterdir()), [])
@@ -82,6 +83,7 @@ class TestAtelierStatus(unittest.TestCase):
 
             md = atelier_status.format_status_markdown(payload)
             self.assertIn("non initialisé", md)
+            self.assertNotIn("Projets suivis", md)
             self.assertIn("/gravity-architect init", md)
             self.assertNotIn("bridge", md.lower())
 
@@ -362,6 +364,77 @@ class TestAtelierStatus(unittest.TestCase):
                 self.assertEqual(proc.returncode, 0, msg=proc.stderr or proc.stdout)
                 self.assertEqual(json.loads(proc.stdout.strip()), {})
                 self.assertFalse(reg_path.exists())
+
+    def test_atelier_status_projects_list_and_compact_pre_invocation(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            ws = root / "atelier"
+            r1 = root / "svc-one"
+            r2 = root / "svc-two"
+            r1.mkdir()
+            r2.mkdir()
+            fake_home = root / "home"
+            fake_home.mkdir()
+            arch_home = root / "arch-home"
+
+            with mock.patch.dict(
+                os.environ,
+                {"GRAVITY_ARCHITECT_HOME": str(arch_home), "GRAVITY_ARCHITECT_SKIP_REGISTRY": "1"},
+            ):
+                init_workspace.init_workspace(
+                    ws,
+                    name="Atelier Projects",
+                    projects=[("svc-one", "Service 1", r1), ("svc-two", "Service 2", r2)],
+                )
+
+            payload = atelier_status.collect_atelier_status(
+                workspace_arg=ws,
+                env={},
+                home_dir=fake_home,
+            )
+            self.assertTrue(payload["initialized"])
+            self.assertEqual(payload["projects_count"], 2)
+            self.assertEqual(payload["projects"], ["svc-one", "svc-two"])
+
+            md = atelier_status.format_status_markdown(payload)
+            self.assertIn("- **Projets suivis (2) :** `svc-one`, `svc-two`", md)
+
+            proc = _run_hook(
+                json.dumps({"lastUserInput": "/gravity-architect"}),
+                cwd=ws,
+                fake_home=fake_home,
+                arch_home=arch_home,
+            )
+            self.assertEqual(proc.returncode, 0, msg=proc.stderr or proc.stdout)
+            self.assertTrue(proc.stdout.isascii())
+            out = json.loads(proc.stdout.strip())
+            self.assertEqual(out.get("terminationBehavior"), "terminate")
+            hook_md = (out["injectSteps"][0].get("systemMessage") or {}).get("metadata", {}).get("user_markdown") or ""
+            self.assertIn("svc-one", hook_md)
+            self.assertIn("svc-two", hook_md)
+            self.assertLessEqual(len(hook_md.splitlines()), 25)
+            self.assertFalse((arch_home / "ateliers.json").exists())
+
+            many_projects = [f"svc-{i:02d}" for i in range(12)]
+            compact_md = atelier_status.format_status_markdown(
+                {
+                    "initialized": True,
+                    "workspace_name": "Atelier Large",
+                    "workspace": str(ws),
+                    "projects_count": 12,
+                    "projects": many_projects,
+                    "specs": [],
+                    "pending_tasks": [],
+                    "tasks_by_wave": {},
+                    "hygiene_alerts": [],
+                    "suggested_actions": [],
+                }
+            )
+            self.assertIn("- **Projets suivis (12) :**", compact_md)
+            self.assertIn("`svc-00`", compact_md)
+            self.assertIn("`svc-09`", compact_md)
+            self.assertNotIn("`svc-10`", compact_md)
+            self.assertIn("*(+2 autre(s))*", compact_md)
 
 
 if __name__ == "__main__":
