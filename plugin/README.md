@@ -29,12 +29,13 @@ See [`skills/gravity-architect/SKILL.md`](skills/gravity-architect/SKILL.md) and
 
 ### Synchronization, Waves & Validation CLIs
 - **`scripts/sync_tracking.py`:** falls back to `default_architect_home()` (`$GRAVITY_ARCHITECT_HOME` > `$GRAVITY_HOME/architect` > `~/.gemini/gravity/architect`) after `--config` > `--workspace` > `$GRAVITY_ARCHITECT_WORKSPACE` > `cwd` > unique subfolder; supports `--max-stdout-bytes <N>` (default `8192`) and `--max-changelog-lines <N>` (default `45`).
+- **`scripts/dashboard_provider.py` (`SPI-1`):** exposes read-only architect workshop data (`ateliers.json`, specs, wave tasks, `audits/code/`) to the unified `gravity` Core dashboard (`--view architect --json`).
 - **`core/waves.py`:** `--check-waves --workspace <dir> [--json]` enforces fail-closed DAG, file-disjointness, `<= 5` code files, hybrid `::`/`~L` anchors, and `Spec ID`/`Spec source` (`validated`)/`Acceptance Criteria Covered`; `--export-wave <N>` emits `wave_plan_v1`.
 - **`scripts/validate.py`:** slim (< 300 L) strict validator powered by `_shared.validator_core` (`--strict`, `--fix-python-cmd`, `--json`, `--plugin-root`).
 
 ## Multi-Repo Tracking, Module Contract & Privacy Mode
 
-- **Gravity module contract:** [`config/module.json`](config/module.json) (`schema_version: 1`, `id: "architect"`, storage `$GRAVITY_ARCHITECT_HOME` > `$GRAVITY_HOME/architect` > `~/.gemini/gravity/architect`).
+- **Gravity module contract:** [`config/module.json`](config/module.json) (`schema_version: 1`, `id: "architect"`, `SPI-1` `dashboard.provider_script`, `SPI-2` `capture_policy`, storage `$GRAVITY_ARCHITECT_HOME` > `$GRAVITY_HOME/architect` > `~/.gemini/gravity/architect`).
 - **Auto-detected manifests & multi-format versions:** checks `plugin/plugin.json`, `{id}-plugin/plugin.json`, `plugin.json`; reads versions from `plugin.json`, `package.json`, `pyproject.toml`, `Cargo.toml`, `setup.cfg`, `VERSION`/`.txt`, or `version_json_path`.
 - **Branch-aware Git & changelogs:** tracks `main` vs `dev`, latest tag on `main`, untagged non-merge commits, `[Unreleased]` vs latest release, and ignores non-runtime WIP.
 - **Privacy mode (`privacy.public_mode`):** opt-in (`false` default) in `projects.json`; when `true`, `ECOSYSTEM.md` lists only tracked plugin installs, suppresses `orphan_plugin_dirs` for third-party folders, and masks local machine paths in generated Markdown.

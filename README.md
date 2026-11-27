@@ -22,7 +22,7 @@ gravity-architect/
 ├── plugin/                          # Standalone Antigravity plugin
 │   ├── plugin.json                  # Official 9-field manifest
 │   ├── hooks.json                   # PreInvocation hook configuration (enabled: true)
-│   ├── config/module.json           # Gravity module contract (schema_version: 1)
+│   ├── config/module.json           # Gravity module contract (schema_version: 1, SPI-1 dashboard, SPI-2 capture_policy)
 │   ├── README.md                    # Plugin user guide
 │   ├── assets/logo.svg              # 1:1 square logo
 │   ├── rules/AGENTS.md              # Lightweight activation rule
@@ -31,7 +31,7 @@ gravity-architect/
 │   ├── skills/gravity-architect/    # /gravity-architect skill + references/workflows-and-hygiene.md
 │   ├── templates/                   # Hot/Cold workshop templates (spec, task, project card, audit-code, ...)
 │   ├── core/                        # SRP core (io_utils, discovery, git_collector, watches, delta, renderers, waves)
-│   └── scripts/                     # CLIs (sync_tracking, init_workspace, atelier_status) & slim validate.py (< 300 L)
+│   └── scripts/                     # CLIs (sync_tracking, init_workspace, atelier_status, dashboard_provider) & slim validate.py (< 300 L)
 └── tests/                           # Standard-library unittest suite
 ```
 
@@ -95,6 +95,7 @@ Inside Antigravity, invoke `/gravity-architect` (0-token `PreInvocation` status)
 - **Anti-Drift Wave Planning (`core/waves.py`):** fail-closed DAG ordering, file-disjointness per wave, `<= 5` code files per task, hybrid `::`/`~L` anchors, `Spec ID`/`Spec source` (`status == "validated"`)/`Acceptance Criteria Covered` enforcement, `wave_plan_v1` export for native `/swarm` execution (with `run_workflow` available as explicit opt-in).
 - **Isolated Code Audits (`audits/code/`):** read-only Code & Architecture audits (`CODE-XX-N` `P0`/`P1`/`P2`) strictly separated from `audits/agents/`.
 - **Product Repo Guard & Privacy Mode:** `init_workspace.py` refuses accidental initialization inside product repositories without `--force`, and `privacy.public_mode` filters `ECOSYSTEM.md` and masks local machine paths.
+- **`SPI-1` & `SPI-2` Ecosystem Integration:** [`plugin/scripts/dashboard_provider.py`](plugin/scripts/dashboard_provider.py) serves read-only workshop state (`ateliers.json`, specs, wave tasks, `audits/code/`) to the unified `gravity` Core cockpit (`SPI-1`), while [`plugin/config/module.json`](plugin/config/module.json) declares `capture_policy` (`SPI-2`) for `gravity-metrics`.
 
 ---
 
