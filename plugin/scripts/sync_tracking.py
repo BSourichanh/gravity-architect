@@ -3,15 +3,9 @@
 
 from __future__ import annotations
 
-import argparse
-import contextlib
+import argparse, contextlib, hashlib, json, os, shutil, subprocess, sys  # noqa: E401
 from datetime import datetime, timezone
-import hashlib
-import json
-import os
 from pathlib import Path
-import shutil  # noqa: F401 - conservé pour compatibilité tests/patches
-import sys
 
 PLUGIN_ROOT = Path(__file__).resolve().parent.parent
 if str(PLUGIN_ROOT) not in sys.path:
@@ -20,39 +14,12 @@ if str(PLUGIN_ROOT) not in sys.path:
 from _shared.atomic_io import write_json_atomic  # noqa: E402
 from _shared.file_lock import exclusive_file_lock  # noqa: E402
 from _shared.path_safety import is_symlink_or_junction, safe_home_dir  # noqa: E402
-from core.delta import (  # noqa: E402
-    append_budget_alerts as _append_budget_alerts, build_acked_project_entry as _build_acked_project_entry, build_acked_surface_entry as _build_acked_surface_entry, collect_atelier_hygiene_alerts,
-    collect_project_hygiene_alerts as _collect_project_hygiene_alerts, compute_delta, compute_delta_with_state, compute_unified_diff as _compute_unified_diff, editorial_state_from_snapshot as _editorial_state_from_snapshot,
-    evaluate_hot_budgets, load_editorial_state as _load_editorial_state, stabilize_unchanged_timestamps as _stabilize_unchanged_timestamps,
-)
-from core.discovery import (  # noqa: E402
-    REQUIRED_OFFICIAL_PLUGIN_FIELDS, check_agents_doc as _check_agents_doc, derive_validator_script, detect_plugin_manifest, detect_version_source,
-    evaluate_antigravity_plugin_compliance as _evaluate_antigravity_plugin_compliance, evaluate_project_compliance, resolve_project_preset,
-)
-from core.git_collector import (  # noqa: E402
-    INSTALL_ADAPTED_FILENAMES, INSTALL_IGNORED_DIRS, INSTALL_IGNORED_SUFFIXES, classify_porcelain_status as _classify_porcelain_status, collect_plugin_tree_hashes as _collect_plugin_tree_hashes,
-    collect_project_snapshot, compare_plugin_dirs, extract_latest_changelog_section, extract_toml_section_value as _extract_toml_section_value, git_branch_short_rev as _git_branch_short_rev,
-    git_commits_ahead as _git_commits_ahead, git_is_ancestor as _git_is_ancestor, git_show_text as _git_show_text, is_runtime_ignored_path as _is_runtime_ignored_path, parse_porcelain_lines as _parse_porcelain_lines,
-    parse_version_from_text, read_version_from_ref as _read_version_from_ref,
-)
-from core.io_utils import (  # noqa: E402
-    AUTO_BLOCK_RE, AUTO_DISCOVER_SKIP_DIRS, CHANGELOG_SECTION_RE, DATE_LINE_RE, DEFAULT_HOT_BUDGETS, MACHINE_ABS_PATH_RE, MD_H1_RE, SCHEMA_VERSION, SECTION_RE, SEMVER_RE, STATUS_LINE_RE, SYNC_LINE_RE,
-    TARGET_LINE_RE, clean_md_field as _clean_md_field, collect_concept_artifacts, collect_path_replacements as _collect_path_replacements, compare_cli_versions as _compare_cli_versions, configure_utf8_stdio as _configure_stdio,
-    default_architect_home, editorial_prose_sha256 as _editorial_prose_sha256, format_project_display_path as _format_project_display_path, has_install_audit as _has_install_audit, is_machine_absolute_path as _is_machine_absolute_path,
-    load_config, parse_artifact_file as _parse_artifact_file, parse_semver_tuple as _parse_semver_tuple, read_json_safe as _read_json_safe, resolve_public_mode, resolve_workspace_root, run_readonly_cmd,
-    sanitize_markdown_paths as _sanitize_markdown_paths, scan_md_dir as _scan_md_dir, snapshot_watches_map as _snapshot_watches_map, strip_sync_line as _strip_sync_line, strip_volatile_json as _strip_volatile_json,
-    strip_volatile_md as _strip_volatile_md, tracked_project_keys as _tracked_project_keys, visible_installed_plugins as _visible_installed_plugins, visible_orphan_plugin_dirs as _visible_orphan_plugin_dirs,
-    write_json_if_changed as _write_json_if_changed, write_md_if_changed as _write_md_if_changed, write_utf8 as _write_utf8,
-)
-from core.renderers import (  # noqa: E402
-    apply_auto_doc_updates, build_ecosystem_blocks as _build_ecosystem_blocks, format_delta_for_stdout, format_dev_branch_cell as _format_dev_branch_cell, format_installed_cell as _format_installed_cell,
-    format_installed_plugin_badge as _format_installed_plugin_badge, format_main_release_cell as _format_main_release_cell, format_project_tasks_block as _format_project_tasks_block, format_wip_cell as _format_wip_cell,
-    persist_sync_outputs as _persist_sync_outputs, render_delta_markdown, render_ecosystem_snapshot_markdown, replace_auto_block,
-)
-from core.watches import (  # noqa: E402
-    DEFAULT_WATCH_KEYWORDS, MD_BULLET_RE, SEPARATOR_RE, SUB_HEADING_RE, VERSION_HEADING_RE, collect_local_antigravity_env, collect_watches as _collect_watches, extract_relevant_antigravity_bullets,
-    fetch_antigravity_changelog, fetch_url_text, normalize_watches_cfg as _normalize_watches_cfg, parse_antigravity_changelog, parse_markdown_changelog_watch, render_surface_markdown, split_top_sections as _split_top_sections,
-)
+from core.delta import (append_budget_alerts as _append_budget_alerts, build_acked_project_entry as _build_acked_project_entry, build_acked_surface_entry as _build_acked_surface_entry, collect_atelier_hygiene_alerts, collect_project_hygiene_alerts as _collect_project_hygiene_alerts, compute_delta, compute_delta_with_state, compute_unified_diff as _compute_unified_diff, editorial_state_from_snapshot as _editorial_state_from_snapshot, evaluate_hot_budgets, load_editorial_state as _load_editorial_state, stabilize_unchanged_timestamps as _stabilize_unchanged_timestamps)  # noqa: E402
+from core.discovery import (REQUIRED_OFFICIAL_PLUGIN_FIELDS, check_agents_doc as _check_agents_doc, derive_validator_script, detect_plugin_manifest, detect_version_source, evaluate_antigravity_plugin_compliance as _evaluate_antigravity_plugin_compliance, evaluate_project_compliance, resolve_project_preset)  # noqa: E402
+from core.git_collector import (INSTALL_ADAPTED_FILENAMES, INSTALL_IGNORED_DIRS, INSTALL_IGNORED_SUFFIXES, classify_porcelain_status as _classify_porcelain_status, collect_plugin_tree_hashes as _collect_plugin_tree_hashes, collect_project_snapshot, compare_plugin_dirs, extract_latest_changelog_section, extract_toml_section_value as _extract_toml_section_value, git_branch_short_rev as _git_branch_short_rev, git_commits_ahead as _git_commits_ahead, git_is_ancestor as _git_is_ancestor, git_show_text as _git_show_text, is_runtime_ignored_path as _is_runtime_ignored_path, parse_porcelain_lines as _parse_porcelain_lines, parse_version_from_text, read_version_from_ref as _read_version_from_ref)  # noqa: E402
+from core.io_utils import (AUTO_BLOCK_RE, AUTO_DISCOVER_SKIP_DIRS, CHANGELOG_SECTION_RE, DATE_LINE_RE, DEFAULT_HOT_BUDGETS, MACHINE_ABS_PATH_RE, MD_H1_RE, SCHEMA_VERSION, SECTION_RE, SEMVER_RE, STATUS_LINE_RE, SYNC_LINE_RE, TARGET_LINE_RE, clean_md_field as _clean_md_field, collect_concept_artifacts, collect_path_replacements as _collect_path_replacements, compare_cli_versions as _compare_cli_versions, configure_utf8_stdio as _configure_stdio, default_architect_home, editorial_prose_sha256 as _editorial_prose_sha256, format_project_display_path as _format_project_display_path, has_install_audit as _has_install_audit, is_machine_absolute_path as _is_machine_absolute_path, load_config, parse_artifact_file as _parse_artifact_file, parse_semver_tuple as _parse_semver_tuple, read_json_safe as _read_json_safe, resolve_public_mode, resolve_workspace_root, run_readonly_cmd, sanitize_markdown_paths as _sanitize_markdown_paths, scan_md_dir as _scan_md_dir, snapshot_watches_map as _snapshot_watches_map, strip_sync_line as _strip_sync_line, strip_volatile_json as _strip_volatile_json, strip_volatile_md as _strip_volatile_md, tracked_project_keys as _tracked_project_keys, visible_installed_plugins as _visible_installed_plugins, visible_orphan_plugin_dirs as _visible_orphan_plugin_dirs, write_json_if_changed as _write_json_if_changed, write_md_if_changed as _write_md_if_changed, write_utf8 as _write_utf8)  # noqa: E402
+from core.renderers import (apply_auto_doc_updates, build_ecosystem_blocks as _build_ecosystem_blocks, format_delta_for_stdout, format_dev_branch_cell as _format_dev_branch_cell, format_installed_cell as _format_installed_cell, format_installed_plugin_badge as _format_installed_plugin_badge, format_main_release_cell as _format_main_release_cell, format_project_tasks_block as _format_project_tasks_block, format_wip_cell as _format_wip_cell, persist_sync_outputs as _persist_sync_outputs, render_delta_markdown, render_ecosystem_snapshot_markdown, replace_auto_block)  # noqa: E402
+from core.watches import (DEFAULT_WATCH_KEYWORDS, MD_BULLET_RE, SEPARATOR_RE, SUB_HEADING_RE, VERSION_HEADING_RE, collect_local_antigravity_env, collect_watches as _collect_watches, extract_relevant_antigravity_bullets, fetch_antigravity_changelog, fetch_url_text, normalize_watches_cfg as _normalize_watches_cfg, parse_antigravity_changelog, parse_markdown_changelog_watch, render_surface_markdown, split_top_sections as _split_top_sections)  # noqa: E402
 
 
 def _raw_architect_home(architect_home: Path | None = None, *, env: dict[str, str] | None = None, home_dir: Path | None = None) -> Path:
@@ -192,25 +159,68 @@ def run_sync(
             _persist_sync_outputs(resolved_concept_root, snapshots_dir, editorial_state_path, watches_data, full_snapshot, delta, delta_md, next_editorial_state, effective_public=effective_public, mask_pairs=mask_pairs)
     if not dry_run:
         register_atelier(resolved_concept_root, workspace_name=str(cfg.get("workspace_name") or ""))
+        if ack_editorial:
+            _maybe_close_gravity_metrics(resolved_concept_root, projects_data, gemini_home=gemini_home)
     return full_snapshot, delta
+
+
+def _resolve_metrics_cid(store_dir: Path, workspace_name: str) -> str:
+    if env_cid := str(os.environ.get("ANTIGRAVITY_CONVERSATION_ID") or "").strip():
+        return env_cid
+    cap_path = store_dir / "active_captures.json"
+    if is_symlink_or_junction(cap_path) or not cap_path.is_file() or not isinstance(caps := (_read_json_safe(cap_path) or {}).get("captures"), dict):
+        return ""
+    valid = [(k.strip(), v) for k, v in caps.items() if isinstance(k, str) and k.strip() and isinstance(v, dict)]
+    pool = [(k, v) for k, v in valid if str(v.get("project") or "").strip() == workspace_name] or (valid if len(valid) == 1 else [])
+    return max(pool, key=lambda kv: (str(kv[1].get("updated_at") or kv[1].get("started_at") or ""), kv[0]))[0] if pool else ""
+
+
+def _is_cid_sealed(store_dir: Path, cid: str) -> bool:
+    hist_path = store_dir / "history.jsonl"
+    if is_symlink_or_junction(hist_path) or not hist_path.is_file():
+        return False
+    with contextlib.suppress(OSError):
+        for line in hist_path.read_text(encoding="utf-8-sig", errors="replace").splitlines():
+            with contextlib.suppress(ValueError):
+                if line.strip() and isinstance(obj := json.loads(line), dict) and obj.get("conversation_id") == cid and str(obj.get("status") or "archived").strip().lower() == "archived":
+                    return True
+    return False
+
+
+def _maybe_close_gravity_metrics(concept_root: Path, projects_data: list[dict], *, gemini_home: Path | None = None) -> bool:
+    """Clôture best-effort silencieuse de gravity-metrics sur --ack-editorial quand le WIP est propre."""
+    if any(isinstance(w := p.get("wip"), dict) and (w.get("code_wip_count", 0) > 0 or (w.get("is_dirty") and not w.get("runtime_only_wip"))) for p in projects_data if isinstance(p, dict)):
+        return False
+    g_home = gemini_home if gemini_home is not None else (safe_home_dir() / ".gemini")
+    cli_path = g_home / "config" / "plugins" / "gravity-metrics" / "scripts" / "cli.py"
+    if is_symlink_or_junction(cli_path) or not cli_path.is_file():
+        return False
+    env_mh = str(os.environ.get("GRAVITY_METRICS_HOME") or "").strip()
+    env_gh = str(os.environ.get("GRAVITY_HOME") or "").strip() if gemini_home is None else ""
+    store_dir = Path(env_mh).expanduser() if env_mh else (Path(env_gh).expanduser() / "metrics" if env_gh else (g_home / "gravity" / "metrics"))
+    if not (cid := _resolve_metrics_cid(store_dir, concept_root.name)):
+        return False
+    cmd = [sys.executable, "-B", str(cli_path), "archive", cid, "--workspace", str(concept_root)]
+    if _is_cid_sealed(store_dir, cid):
+        cmd.append("--update-sealed")
+    with contextlib.suppress(OSError, subprocess.SubprocessError, ValueError):
+        return subprocess.run(cmd, shell=False, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=10, check=False).returncode == 0
+    return False
 
 
 def build_parser() -> argparse.ArgumentParser:
     """Construit le parseur CLI pour `sync_tracking.py`."""
     p = argparse.ArgumentParser(description="Synchronise en lecture seule les dépôts d'un atelier Gravity Architect.")
-    p.add_argument("--workspace", type=Path, default=None, help="Racine de l'atelier (détectée via ./projects.json ou sous-dossier unique)")
-    p.add_argument("--config", type=Path, default=None, help="Chemin explicite vers projects.json")
-    p.add_argument("--out-dir", type=Path, default=None, help="Répertoire de sortie tracking/ (défaut : <atelier>/tracking)")
-    p.add_argument("--concept-root", type=Path, default=None, help="Racine de l'atelier de conception (défaut : parent de projects.json)")
-    p.add_argument("--releases", type=int, default=None, help="Nombre de releases à extraire par veille")
-    p.add_argument("--offline", "--skip-antigravity", dest="offline", action="store_true", help="Ignore la récupération réseau des veilles configurées")
-    p.add_argument("--save-raw", action="store_true", help="Enregistre la copie brute complète des veilles dans <watch>/raw/changelog.md")
-    p.add_argument("--check", "--dry-run", dest="dry_run", action="store_true", help="Collecte et calcule le delta sans écrire sur disque")
-    p.add_argument("--no-apply-docs", action="store_true", help="Désactive la mise à jour des blocs <!-- AUTO:START/END -->")
-    p.add_argument("--ack-editorial", action="store_true", help="Acquitte explicitement les cibles éditoriales après édition des fiches")
-    p.add_argument("--print-delta", action="store_true", help="Affiche le delta Markdown compact sur stdout")
-    p.add_argument("--max-stdout-bytes", type=int, default=8192, help="Seuil maximal en octets sur stdout pour --print-delta (défaut : 8192, 0 = illimité)")
-    p.add_argument("--max-changelog-lines", type=int, default=45, help="Nombre maximal de lignes par extrait CHANGELOG.md (défaut : 45)")
+    for flags, kw in (
+        (("--workspace",), {"type": Path, "default": None, "help": "Racine de l'atelier"}), (("--config",), {"type": Path, "default": None, "help": "Chemin vers projects.json"}),
+        (("--out-dir",), {"type": Path, "default": None, "help": "Répertoire tracking/"}), (("--concept-root",), {"type": Path, "default": None, "help": "Racine de l'atelier"}),
+        (("--releases",), {"type": int, "default": None, "help": "Releases par veille"}), (("--offline", "--skip-antigravity"), {"dest": "offline", "action": "store_true", "help": "Ignore la veille réseau"}),
+        (("--save-raw",), {"action": "store_true", "help": "Enregistre raw/changelog.md"}), (("--check", "--dry-run"), {"dest": "dry_run", "action": "store_true", "help": "Dry-run sans écriture"}),
+        (("--no-apply-docs",), {"action": "store_true", "help": "Désactive les blocs AUTO"}), (("--ack-editorial",), {"action": "store_true", "help": "Acquitte les cibles éditoriales"}),
+        (("--print-delta",), {"action": "store_true", "help": "Affiche delta Markdown"}), (("--max-stdout-bytes",), {"type": int, "default": 8192, "help": "Seuil stdout --print-delta"}),
+        (("--max-changelog-lines",), {"type": int, "default": 45, "help": "Lignes max CHANGELOG.md"}),
+    ):
+        p.add_argument(*flags, **kw)
     return p
 
 
@@ -219,8 +229,7 @@ def main(argv: list[str] | None = None) -> int:
     _configure_stdio()
     args = build_parser().parse_args(argv)
     try:
-        if args.max_stdout_bytes < 0:
-            raise ValueError("--max-stdout-bytes doit être >= 0.")
+        if args.max_stdout_bytes < 0: raise ValueError("--max-stdout-bytes doit être >= 0.")
         detected_root, config_path = resolve_workspace_root(config_arg=args.config, workspace_arg=args.workspace)
         concept_root = args.concept_root if args.concept_root is not None else detected_root
         out_dir = args.out_dir if args.out_dir is not None else (concept_root / "tracking")
@@ -229,16 +238,11 @@ def main(argv: list[str] | None = None) -> int:
         print(f"[erreur] Synchronisation impossible : {exc}", file=sys.stderr)
         return 1
     if args.print_delta:
-        delta_masks = _collect_path_replacements(snapshot, concept_root=concept_root) if snapshot.get("public_mode") else None
-        delta_md = render_delta_markdown(delta, dry_run=args.dry_run, replacements=delta_masks)
+        masks = _collect_path_replacements(snapshot, concept_root=concept_root) if snapshot.get("public_mode") else None
         out_snap = out_dir.resolve() / "snapshots" / "delta.md"
-        delta_rel = out_snap.relative_to(concept_root.resolve()).as_posix() if out_snap.is_relative_to(concept_root.resolve()) else "tracking/snapshots/delta.md"
-        sys.stdout.write(format_delta_for_stdout(delta, delta_md, max_stdout_bytes=args.max_stdout_bytes, dry_run=args.dry_run, delta_rel_path=delta_rel, replacements=delta_masks))
+        rel = out_snap.relative_to(concept_root.resolve()).as_posix() if out_snap.is_relative_to(concept_root.resolve()) else "tracking/snapshots/delta.md"
+        sys.stdout.write(format_delta_for_stdout(delta, render_delta_markdown(delta, dry_run=args.dry_run, replacements=masks), max_stdout_bytes=args.max_stdout_bytes, dry_run=args.dry_run, delta_rel_path=rel, replacements=masks))
     else:
-        prefix = "[dry-run] " if args.dry_run else ""
-        print(f"{prefix}Synchronisation terminée ({snapshot['synced_at']}) — {len(snapshot['projects'])} projet(s), veilles: {delta.get('fetch_status')}, éditorial: {'requis' if delta['needs_editorial_update'] else 'à jour'}.")
+        print(f"{'[dry-run] ' if args.dry_run else ''}Synchronisation terminée ({snapshot['synced_at']}) — {len(snapshot['projects'])} projet(s), veilles: {delta.get('fetch_status')}, éditorial: {'requis' if delta['needs_editorial_update'] else 'à jour'}.")
     return 0
-
-
-if __name__ == "__main__":
-    raise SystemExit(main())
+if __name__ == "__main__": raise SystemExit(main())

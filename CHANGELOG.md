@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **[TASK-UX-03] Clôture auto `gravity-metrics` en Validation & `cycle_phases` RO (`SPEC-UX-01`):**
+  - Déclenchement silencieux *best-effort* de `gravity-metrics/scripts/cli.py archive` (`shell=False`, `--update-sealed` si déjà scellé, jamais `--force`) dans `plugin/scripts/sync_tracking.py` lors de `--ack-editorial` avec `0` WIP sale dans les dépôts suivis.
+  - Calcul et exposition en lecture seule stricte de `cycle_phases` (`conception`, `planification`, `production`, `validation`) et `current_phase` dans `plugin/scripts/dashboard_provider.py` (`--view architect`).
+  - Documentation de l'auto-clôture hybride dans `SKILL.md` et `references/workflows-and-hygiene.md` et couverture unitaire dédiée dans `tests/test_architect_auto_close_and_phases.py`.
+
 ## [0.6.0] - 2026-11-27
 
 ### Added

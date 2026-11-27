@@ -427,6 +427,51 @@ def _build_waves_summary(tasks: list[dict[str, Any]]) -> dict[str, Any]:
         waves.append({"wave": w_num, "tasks_count": len(w_tasks), "projects": sorted(projs), "status_counts": status_counts, "filenames": [str(wt.get("filename") or "") for wt in w_tasks]})
     return {"total_tasks": len(tasks), "waves_count": len([k for k in ordered if k is not None]), "waves": waves}
 
+
+def _build_cycle_phases(
+    specs: list[dict[str, Any]],
+    tasks: list[dict[str, Any]],
+    delta: dict[str, Any],
+    *,
+    archived_specs_count: int = 0,
+    archived_tasks_count: int = 0,
+) -> tuple[list[dict[str, Any]], str]:
+    """Compute read-only 4-phase cycle status (`conception`, `planification`, `production`, `validation`) and `current_phase`."""
+    spec_codes = {str(s.get("status_code") or "unknown") for s in specs}
+    task_codes = [str(t.get("status_code") or "unknown") for t in tasks]
+    has_validated_spec = bool(spec_codes & {"validated", "ready", "done", "completed"})
+    has_draft_spec = bool(spec_codes & {"draft", "unknown"})
+    has_active_tasks = bool(tasks)
+    has_done_only_tasks = has_active_tasks and all(c in ("done", "completed", "archived") for c in task_codes)
+    has_draft_only_tasks = has_active_tasks and all(c in ("draft", "unknown") for c in task_codes)
+    prod_count = sum(1 for c in task_codes if c in ("in_progress", "running", "done", "completed"))
+    delta_clean = bool(delta.get("exists")) and str(delta.get("editorial_status") or "").strip().upper() == "NO_EDITORIAL_CHANGES" and not (delta.get("hygiene_alerts") or [])
+    has_archived = archived_specs_count > 0 or archived_tasks_count > 0
+
+    if not specs and not tasks:
+        if has_archived and delta.get("exists"):
+            st = ("done", "done", "done", "done" if delta_clean else "active")
+            cur = "validation"
+        else:
+            st = ("pending", "pending", "pending", "pending")
+            cur = "conception"
+    elif not has_active_tasks:
+        if has_validated_spec:
+            st, cur = ("done", "active", "pending", "pending"), "planification"
+        else:
+            st, cur = ("active" if has_draft_spec else "pending", "pending", "pending", "pending"), "conception"
+    elif has_draft_only_tasks:
+        st, cur = ("done", "active", "pending", "pending"), "planification"
+    elif has_done_only_tasks:
+        st = ("done", "done", "done", "done" if delta_clean else "active")
+        cur = "validation"
+    else:
+        st, cur = ("done", "done", "active", "pending"), "production"
+
+    counts = (len(specs), len(tasks), prod_count or len(tasks), archived_tasks_count)
+    defs = (("conception", "Conception"), ("planification", "Planification"), ("production", "Production"), ("validation", "Validation"))
+    return ([{"id": pid, "label": label, "status": status, "count": cnt} for (pid, label), status, cnt in zip(defs, st, counts)], cur)
+
 def _enforce_payload_budget(payload: dict[str, Any], list_keys: Sequence[str], max_bytes: int = MAX_PAYLOAD_BYTES) -> dict[str, Any]:
     def _size() -> int:
         return len(json.dumps(payload, ensure_ascii=False).encode("utf-8"))
@@ -461,6 +506,7 @@ def get_architect_view(
         "ecosystem": {"exists": False, "size_bytes": 0, "budget_bytes": None, "over_budget": False, "updated_at": "", "uri": "", "alerts": [], "projects_status": {}},
         "delta": {"exists": False, "date": "", "editorial_status": "", "watches_status": "", "editorial_targets": [], "hygiene_alerts": [], "uri": ""},
         "hot_budgets": {}, "watches_count": 0, "projects": [], "specs": [], "tasks": [], "waves_summary": {"total_tasks": 0, "waves_count": 0, "waves": []},
+        "cycle_phases": _build_cycle_phases([], [], {"exists": False})[0], "current_phase": "conception",
         "archived_specs_count": 0, "archived_tasks_count": 0, "audits": [], "index_audit": None, "index_audits": [], "warnings": warnings,
     }
     if blocked:
@@ -484,12 +530,17 @@ def get_architect_view(
     ecosystem, delta = _read_ecosystem_ro(eco_path, hot_budgets.get("ECOSYSTEM.md")), _read_delta_ro(delta_path)
     specs, tasks = _scan_flat_artifacts_ro(specs_dir, atelier_root), _scan_flat_artifacts_ro(active_tasks_dir, atelier_root)
     _enrich_projects_ro(projects, ecosystem, specs, tasks, audits)
+    cycle_phases, current_phase = _build_cycle_phases(
+        specs, tasks, delta,
+        archived_specs_count=len(arch_specs_tokens), archived_tasks_count=len(arch_tasks_tokens),
+    )
     available = bool(atelier_root.is_dir() and (ecosystem["exists"] or proj_exists or delta["exists"] or specs or tasks or audits or index_audit is not None))
     base_payload.update({
         "signature": sig, "available": available, "workspace_name": ws_name or atelier_root.name, "public_mode": public_mode,
         "ateliers": _merge_ateliers(registry_ateliers, current_root=atelier_root, current_available=available, current_name=ws_name or atelier_root.name, current_updated_at=delta.get("date") or ecosystem.get("updated_at") or "", current_source=discovery_source),
         "ecosystem": ecosystem, "delta": delta, "hot_budgets": hot_budgets, "watches_count": watches_count, "projects": projects,
         "specs": specs, "tasks": tasks, "waves_summary": _build_waves_summary(tasks),
+        "cycle_phases": cycle_phases, "current_phase": current_phase,
         "archived_specs_count": len(arch_specs_tokens), "archived_tasks_count": len(arch_tasks_tokens), "audits": audits, "index_audit": index_audit, "index_audits": index_audits,
     })
     return _enforce_payload_budget(base_payload, ("audits", "tasks", "specs", "projects", "ateliers"))
