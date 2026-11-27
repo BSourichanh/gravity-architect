@@ -14,6 +14,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Validation explicite de présence et d'unicité intra-lot de `Task ID` dans `plugin/core/waves.py::validate_waves` (`if spec_active:`).
 
 ### Changed
+- **[TASK-DOC-02c] Nettoyage `handoff`, découplage templates & bascule `dev` (`SPEC-DOC-02`):**
+  - Remplacé les derniers reliquats `handoff`/`handoffs` par `task`/`tasks` dans `AGENTS.md`, `plugin/rules/AGENTS.md` (`510` octets `<= 513`) et `plugin/templates/impact-template.md`.
+  - Découplé `plugin/templates/spec-template.md` (`00-INDEX.md` retiré) et basculé `plugin/templates/task-template.md` (`refonte/socle` -> `dev`, exemple de dépendance générique) en parité exacte avec `gravity-workshop`.
 - **[TASK-ARCH-02a] Délégation `_shared` dans `io_utils.py` (`SPEC-ARCH-02`):**
   - Délégation de `plugin/core/io_utils.py::write_utf8` vers `_shared.atomic_io.write_text_atomic` (`fsync`, retries verrou Windows, rejet symlink) et de `default_architect_home` vers `_shared.path_safety.safe_home_dir()`.
 - **[TASK-DOC-01c] Enrichissement pragmatique Hexagonal & DDD des gabarits Spec & Audit (`SPEC-DOC-01`):**

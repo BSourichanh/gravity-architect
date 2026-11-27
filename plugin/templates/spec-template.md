@@ -25,7 +25,7 @@
 *Flux, contrats de données, cas limites, comportement fail-closed et plan de tests. Si le domaine métier est riche ou multi-adapteurs, expliciter les frontières (domaine / ports / adapteurs) sans sur-ingénierie (KISS/YAGNI).*
 
 ## 5. Impacts & Invariants vérifiés
-- Contrôle effectué contre les fiches projet dans [`tracking/projects/`](../tracking/projects/_TEMPLATE.md) et [`docs/conception/00-INDEX.md`](../docs/conception/00-INDEX.md).
+- Contrôle effectué contre les fiches projet dans [`tracking/projects/`](../tracking/projects/_TEMPLATE.md) et la documentation d'architecture de l'atelier.
 
 ## 6. Découpage en tasks (vagues)
 
