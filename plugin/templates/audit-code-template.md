@@ -16,6 +16,7 @@
 ## 2. Qualité d'ingénierie (KISS / YAGNI / DRY / SOLID / CUPID)
 - **Lisibilité & découpage :** *Observations factuelles sur la modularité, la cohésion et la dette technique.*
 - **Duplication & complexité :** *Fonctions critiques, duplication éventuelle et couplages observés.*
+- **Frontières domaine & découplage (Hexagonal / DDD pragmatique) :** *Si le domaine est complexe ou multi-adapteurs, séparation domaine / ports / adapteurs vérifiée sans sur-ingénierie sur les scripts simples.*
 
 ## 3. Invariants & contrats (`config/module.json`, `plugin.json`, séparation Hot / Cold)
 - **Manifeste & contrat module :** *Conformité des champs, du schéma et des commandes.*

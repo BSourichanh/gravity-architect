@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- **[TASK-DOC-01c] Enrichissement pragmatique Hexagonal & DDD des gabarits Spec & Audit (`SPEC-DOC-01`):**
+  - Enrichi `plugin/templates/spec-template.md` (`## 4. Architecture retenue`) pour expliciter les frontières domaine / ports / adapteurs lorsque le domaine métier est riche ou multi-adapteurs, sans sur-ingénierie (KISS/YAGNI).
+  - Enrichi `plugin/templates/audit-code-template.md` (`## 2. Qualité d'ingénierie`) avec une 3e puce dédiée aux frontières domaine & découplage (Hexagonal / DDD pragmatique).
+
 ### Added
 - **[TASK-ARCH-03b] `SPI-1` Dashboard Provider & `SPI-1`/`SPI-2` `module.json` Contract (`SPEC-ARCH-01`):**
   - Added read-only `plugin/scripts/dashboard_provider.py` (`< 550` L, mode `0755`, 100 % Python 3.10+ stdlib) implementing the `SPI-1` CLI (`--view architect --since-signature --atelier --ws --json`, stdin `params`/`context`, fail-closed `--action` `rc=1`), 8-level atelier discovery precedence (`arg_workspace` -> `selected_atelier` -> `env_workspace` -> `architect_home` -> `env_architect_home` -> `ws_hint` -> `architect_registry` -> `module_home`), bilingual FR/EN parsing across `ECOSYSTEM.md`, `delta.md`, `specs/`, `tasks/` (with RO fallback to `handoffs/` only when `tasks/` is absent), and `audits/code/` (strictly excluding `audits/agents/` and symlinks/NTFS junctions via `_shared.path_safety`), and `MAX_PAYLOAD_BYTES = 450_000` budget truncation.
